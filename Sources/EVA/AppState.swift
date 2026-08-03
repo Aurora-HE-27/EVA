@@ -97,8 +97,13 @@ final class AppState: ObservableObject {
             connectionStatus = models.isEmpty ? "Ollama 已连接，但没有模型" : "Ollama 已连接"
             errorMessage = nil
 
-            if selectedModel.isEmpty || !models.contains(where: { $0.name == selectedModel }) {
+            let modelIsUnavailable = !models.contains(where: { $0.name == selectedModel })
+            let shouldMigrateBrokenQwen = Self.isBrokenUpstreamQwenModel(selectedModel)
+                && models.contains(where: { Self.isEVAModel($0.name) })
+
+            if selectedModel.isEmpty || modelIsUnavailable || shouldMigrateBrokenQwen {
                 selectedModel = preferredModel(from: models) ?? ""
+                UserDefaults.standard.set(selectedModel, forKey: "selectedModel")
             }
         } catch {
             models = []
@@ -340,6 +345,10 @@ final class AppState: ObservableObject {
     }
 
     private func preferredModel(from models: [OllamaModel]) -> String? {
+        if let eva = models.first(where: { Self.isEVAModel($0.name) }) {
+            return eva.name
+        }
+
         let preferences = ["qwen", "gemma", "llama"]
         for prefix in preferences {
             if let model = models.first(where: { $0.name.lowercased().contains(prefix) }) {
@@ -347,6 +356,15 @@ final class AppState: ObservableObject {
             }
         }
         return models.first?.name
+    }
+
+    private static func isEVAModel(_ name: String) -> Bool {
+        let normalized = name.lowercased()
+        return normalized == "eva" || normalized.hasPrefix("eva:")
+    }
+
+    private static func isBrokenUpstreamQwenModel(_ name: String) -> Bool {
+        name.lowercased().contains("mradermacher/qwen3-14b-uncensored-gguf")
     }
 
     private func friendlyConnectionError(_ error: Error) -> String {
