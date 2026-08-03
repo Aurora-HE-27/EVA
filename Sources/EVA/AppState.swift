@@ -60,7 +60,6 @@ final class AppState: ObservableObject {
         apiEndpointAddress = UserDefaults.standard.string(forKey: "apiEndpointAddress")
             ?? "https://api.openai.com/v1/chat/completions"
         apiModelName = UserDefaults.standard.string(forKey: "apiModelName") ?? ""
-        apiKey = KeychainStore.loadAPIKey()
         let storedVoiceIdentifier = UserDefaults.standard.string(forKey: "voiceIdentifier")
             ?? legacyDefaults?.string(forKey: "voiceIdentifier")
             ?? ""
@@ -124,7 +123,21 @@ final class AppState: ObservableObject {
                 )
             ]
         }
-        await refreshModels()
+
+        if chatBackend == .ollama {
+            await refreshModels()
+        } else {
+            connectionStatus = "正在读取 API 密钥…"
+        }
+
+        Task { [weak self] in
+            let storedAPIKey = await KeychainStore.loadAPIKey()
+            guard let self else { return }
+            apiKey = storedAPIKey
+            if chatBackend == .compatibleAPI {
+                await refreshModels()
+            }
+        }
     }
 
     func refreshModels() async {
@@ -525,13 +538,7 @@ final class AppState: ObservableObject {
     }
 
     private func compatibleAPIURL(from address: String) throws -> URL {
-        guard let url = URL(string: address.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let scheme = url.scheme,
-              scheme == "https",
-              url.host != nil else {
-            throw AppError.invalidAPIURL
-        }
-        return url
+        try APIEndpointResolver.resolve(address)
     }
 
     private func preferredModel(from models: [OllamaModel]) -> String? {

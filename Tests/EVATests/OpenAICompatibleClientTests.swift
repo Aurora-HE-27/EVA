@@ -47,6 +47,28 @@ final class OpenAICompatibleClientTests: XCTestCase {
         }
         XCTAssertEqual(result, "你好")
     }
+
+    func testResolvesDeepSeekRootAddress() throws {
+        XCTAssertEqual(
+            try APIEndpointResolver.resolve("https://api.deepseek.com").absoluteString,
+            "https://api.deepseek.com/chat/completions"
+        )
+    }
+
+    func testResolvesVersionedProviderBaseAddress() throws {
+        XCTAssertEqual(
+            try APIEndpointResolver.resolve("https://openrouter.ai/api/v1/").absoluteString,
+            "https://openrouter.ai/api/v1/chat/completions"
+        )
+    }
+
+    func testPreservesCompleteEndpoint() throws {
+        let endpoint = "https://example.com/custom/chat/completions"
+        XCTAssertEqual(
+            try APIEndpointResolver.resolve(endpoint).absoluteString,
+            endpoint
+        )
+    }
 }
 
 private final class MockURLProtocol: URLProtocol {

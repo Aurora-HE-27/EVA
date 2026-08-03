@@ -1,5 +1,31 @@
 import Foundation
 
+enum APIEndpointResolver {
+    static func resolve(_ address: String) throws -> URL {
+        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed),
+              components.scheme == "https",
+              let host = components.host,
+              !host.isEmpty else {
+            throw AppError.invalidAPIURL
+        }
+
+        let path = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if path.isEmpty {
+            components.path = host.lowercased() == "api.openai.com"
+                ? "/v1/chat/completions"
+                : "/chat/completions"
+        } else if path.split(separator: "/").last?.lowercased() == "v1" {
+            components.path = "/\(path)/chat/completions"
+        }
+
+        guard let url = components.url else {
+            throw AppError.invalidAPIURL
+        }
+        return url
+    }
+}
+
 struct OpenAICompatibleClient: Sendable {
     private struct ChatRequest: Encodable {
         let model: String
