@@ -33,7 +33,7 @@ struct SettingsView: View {
                         }
                     }
                 } else {
-                    TextField("API 完整端点", text: $appState.apiEndpointAddress)
+                    TextField("API 根地址或完整端点", text: $appState.apiEndpointAddress)
                         .textFieldStyle(.roundedBorder)
                     TextField("API 模型名称", text: $appState.apiModelName)
                         .textFieldStyle(.roundedBorder)
@@ -146,7 +146,7 @@ struct SettingsView: View {
 
     private var settingsDisclosure: String {
         if appState.chatBackend == .compatibleAPI {
-            return "API 模式会把对话内容发送给你配置的服务商；密钥只保存在 macOS 钥匙串。形象和 Qwen3-TTS 声音仍在本机运行。"
+            return "可填写服务商根地址或完整 Chat Completions 端点，EVA 会自动补全常见路径。API 模式会发送对话正文；密钥只保存在 macOS 钥匙串。"
         }
         return "Ollama 对话、默认形象和 Qwen3-TTS 声音均在本机运行。原创声线不可用时会自动回退到 Mac 中文语音。"
     }

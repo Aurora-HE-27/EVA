@@ -14,7 +14,12 @@ cp "$binary_path" "$app_dir/Contents/MacOS/EVA"
 cp "$project_dir/Resources/Info.plist" "$app_dir/Contents/Info.plist"
 rm -rf "$app_dir/Contents/Resources/Assets"
 cp -R "$project_dir/Resources/Assets" "$app_dir/Contents/Resources/Assets"
-codesign --force --deep --sign - "$app_dir"
+codesign \
+    --force \
+    --deep \
+    --sign - \
+    -r='designated => identifier "com.aurorahe27.eva"' \
+    "$app_dir"
 
 if [[ -d "$legacy_app_dir" ]]; then
     rm -rf "$legacy_app_dir"

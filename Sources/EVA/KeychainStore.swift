@@ -2,10 +2,18 @@ import Foundation
 import Security
 
 enum KeychainStore {
-    private static let service = "com.aurorahe27.eva"
+    // v2 starts with the stable local code requirement introduced in EVA 0.4.1.
+    // Keep the legacy item untouched because reading it may require user approval.
+    private static let service = "com.aurorahe27.eva.credentials.v2"
     private static let apiKeyAccount = "chat-compatible-api-key"
 
-    static func loadAPIKey() -> String {
+    static func loadAPIKey() async -> String {
+        await Task.detached(priority: .userInitiated) {
+            loadAPIKeySynchronously()
+        }.value
+    }
+
+    private static func loadAPIKeySynchronously() -> String {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
