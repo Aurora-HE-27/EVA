@@ -39,6 +39,11 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
 
     private static let mlxModel = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
     private static let mlxServerURL = URL(string: "http://127.0.0.1:11435/v1/audio/speech")!
+    static var huggingFaceHomeURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appending(path: "AI开发/ai模型/huggingface", directoryHint: .isDirectory)
+    }
+
     private static let evaVoiceDesign = """
     一位二十三岁成年女性的普通话声音，清澈温柔，音色年轻但不幼态，中高音域，轻微自然气声，发音清楚，亲近而有边界感，像在安静房间里与熟悉的朋友交谈；不要模仿任何真人、演员、主播或已有角色。
     """
@@ -237,6 +242,10 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
                 at: supportDirectory,
                 withIntermediateDirectories: true
             )
+            try FileManager.default.createDirectory(
+                at: Self.huggingFaceHomeURL,
+                withIntermediateDirectories: true
+            )
             if !FileManager.default.fileExists(atPath: logURL.path) {
                 FileManager.default.createFile(atPath: logURL.path, contents: nil)
             }
@@ -261,7 +270,10 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
             "--log-dir", supportDirectory.appending(path: "MLXAudioLogs").path
         ]
         process.environment = ProcessInfo.processInfo.environment.merging(
-            ["PYTHONUNBUFFERED": "1"],
+            [
+                "HF_HOME": Self.huggingFaceHomeURL.path,
+                "PYTHONUNBUFFERED": "1"
+            ],
             uniquingKeysWith: { _, newValue in newValue }
         )
         process.standardOutput = mlxLogHandle ?? FileHandle.nullDevice
