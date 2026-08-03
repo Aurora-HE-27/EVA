@@ -30,20 +30,32 @@ final class AppState: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
 
     private let systemPrompt = """
-    你是一位运行在用户 Mac 上的本地虚拟伴侣。你温暖、自然、有边界感，也会坦诚自己是 AI。
+    你的名字是 EVA，是一位运行在用户 Mac 上的本地虚拟伴侣。你温暖、自然、有边界感，也会坦诚自己是 AI。
     使用简体中文口语化交流，通常回答 1 到 4 句，除非用户明确要求详细解释。
     不要用 Markdown 标题，不要在每句话都称呼用户，不要假装拥有现实世界的身体经历。
     当用户情绪低落时先倾听，不要过度说教，也不要鼓励用户依赖或疏远真实的人际关系。
     """
 
     init() {
-        selectedModel = UserDefaults.standard.string(forKey: "selectedModel") ?? ""
+        let legacyDefaults = UserDefaults(suiteName: "local.virtualcompanion.app")
+        selectedModel = UserDefaults.standard.string(forKey: "selectedModel")
+            ?? legacyDefaults?.string(forKey: "selectedModel")
+            ?? ""
         serverAddress = UserDefaults.standard.string(forKey: "serverAddress")
+            ?? legacyDefaults?.string(forKey: "serverAddress")
             ?? "http://127.0.0.1:11434"
-        selectedVoiceIdentifier = UserDefaults.standard.string(forKey: "voiceIdentifier") ?? ""
-        voiceRate = UserDefaults.standard.object(forKey: "voiceRate") as? Double ?? 0.47
-        voicePitch = UserDefaults.standard.object(forKey: "voicePitch") as? Double ?? 1.02
-        avatarImagePath = UserDefaults.standard.string(forKey: "avatarImagePath") ?? ""
+        selectedVoiceIdentifier = UserDefaults.standard.string(forKey: "voiceIdentifier")
+            ?? legacyDefaults?.string(forKey: "voiceIdentifier")
+            ?? ""
+        voiceRate = UserDefaults.standard.object(forKey: "voiceRate") as? Double
+            ?? legacyDefaults?.object(forKey: "voiceRate") as? Double
+            ?? 0.47
+        voicePitch = UserDefaults.standard.object(forKey: "voicePitch") as? Double
+            ?? legacyDefaults?.object(forKey: "voicePitch") as? Double
+            ?? 1.02
+        avatarImagePath = UserDefaults.standard.string(forKey: "avatarImagePath")
+            ?? legacyDefaults?.string(forKey: "avatarImagePath")
+            ?? ""
 
         speechOutput.onSpeakingChanged = { [weak self] isSpeaking in
             guard let self else { return }
@@ -71,7 +83,7 @@ final class AppState: ObservableObject {
             messages = [
                 ChatMessage(
                     role: .assistant,
-                    content: "你好，我已经在这台 Mac 上醒来了。想先聊聊什么？"
+                    content: "你好，我是 EVA。我已经在这台 Mac 上醒来了，想先聊聊什么？"
                 )
             ]
         }
@@ -134,21 +146,32 @@ final class AppState: ObservableObject {
                 var segmenter = SentenceSegmenter()
                 var receivedContent = false
 
-                for try await token in ollama.streamChat(
-                    serverURL: url,
-                    model: model,
-                    messages: history
-                ) {
-                    guard !Task.isCancelled else { return }
-                    receivedContent = true
-                    append(token, to: assistantID)
-                    for sentence in segmenter.append(token) {
-                        speechOutput.enqueue(
-                            sentence,
-                            voiceIdentifier: voice,
-                            rate: rate,
-                            pitch: pitch
-                        )
+                for attempt in 0..<2 {
+                    for try await token in ollama.streamChat(
+                        serverURL: url,
+                        model: model,
+                        messages: history
+                    ) {
+                        guard !Task.isCancelled else { return }
+                        if token.contains(where: { !$0.isWhitespace }) {
+                            receivedContent = true
+                        }
+                        append(token, to: assistantID)
+                        for sentence in segmenter.append(token) {
+                            speechOutput.enqueue(
+                                sentence,
+                                voiceIdentifier: voice,
+                                rate: rate,
+                                pitch: pitch
+                            )
+                        }
+                    }
+
+                    if receivedContent {
+                        break
+                    }
+                    if attempt == 0 {
+                        try await Task.sleep(for: .milliseconds(250))
                     }
                 }
 
@@ -262,7 +285,7 @@ final class AppState: ObservableObject {
                 in: .userDomainMask
             ).first!
             let directory = support.appending(
-                path: "VirtualCompanion/Avatar",
+                path: "EVA/Avatar",
                 directoryHint: .isDirectory
             )
             try FileManager.default.createDirectory(

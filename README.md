@@ -1,6 +1,6 @@
-# 虚拟伴侣（macOS）
+# EVA（macOS）
 
-一个完全在 Mac 上运行的虚拟伴侣 MVP：
+EVA 是一个完全在 Mac 上运行的本地虚拟伴侣：
 
 - SwiftUI 原生界面
 - Ollama 流式文字对话
@@ -34,7 +34,7 @@ swift run
 ```bash
 chmod +x scripts/package_app.sh
 ./scripts/package_app.sh
-open dist/VirtualCompanion.app
+open dist/EVA.app
 ```
 
 首次使用语音时，macOS 会询问麦克风和语音识别权限。

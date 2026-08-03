@@ -59,7 +59,7 @@ enum AppError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noModel:
-            "没有可用的 Ollama 模型。请先启动 Ollama 并下载一个模型。"
+            "EVA 没有找到可用的 Ollama 模型。请先启动 Ollama 并下载一个模型。"
         case .emptyResponse:
             "模型没有返回内容。"
         case .invalidServerURL:

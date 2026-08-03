@@ -7,7 +7,7 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("设置")
+            Text("EVA 设置")
                 .font(.system(size: 24, weight: .bold, design: .rounded))
 
             Form {

@@ -3,22 +3,22 @@
 import PackageDescription
 
 let package = Package(
-    name: "VirtualCompanion",
+    name: "EVA",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "VirtualCompanion", targets: ["VirtualCompanion"])
+        .executable(name: "EVA", targets: ["EVA"])
     ],
     targets: [
         .executableTarget(
-            name: "VirtualCompanion",
-            path: "Sources/VirtualCompanion"
+            name: "EVA",
+            path: "Sources/EVA"
         ),
         .testTarget(
-            name: "VirtualCompanionTests",
-            dependencies: ["VirtualCompanion"],
-            path: "Tests/VirtualCompanionTests"
+            name: "EVATests",
+            dependencies: ["EVA"],
+            path: "Tests/EVATests"
         )
     ]
 )

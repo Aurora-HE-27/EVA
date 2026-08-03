@@ -25,6 +25,7 @@ struct SentenceSegmenter {
     }
 
     private static func isBoundary(_ character: Character) -> Bool {
-        "。！？!?；;\n".contains(character)
+        let boundaries = "。！？!?；;\n"
+        return boundaries.contains(character)
     }
 }

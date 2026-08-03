@@ -18,6 +18,7 @@ struct OllamaClient: Sendable {
         let model: String
         let messages: [APIMessage]
         let stream: Bool
+        let think: Bool
         let options: Options
 
         struct Options: Encodable {
@@ -70,6 +71,7 @@ struct OllamaClient: Sendable {
                             model: model,
                             messages: messages,
                             stream: true,
+                            think: true,
                             options: .init(temperature: 0.75, num_ctx: 8_192)
                         )
                     )

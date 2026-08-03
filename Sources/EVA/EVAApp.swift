@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct VirtualCompanionApp: App {
+struct EVAApp: App {
     @StateObject private var appState = AppState()
 
     var body: some Scene {
