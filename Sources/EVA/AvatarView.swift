@@ -50,7 +50,7 @@ struct AvatarView: View {
             .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("虚拟伴侣，\(state.statusText)")
+        .accessibilityLabel("EVA 虚拟伴侣，\(state.statusText)")
     }
 
     @ViewBuilder

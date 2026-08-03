@@ -42,7 +42,7 @@ struct ContentView: View {
     private var header: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("虚拟伴侣")
+                Text("EVA")
                     .font(.system(size: 19, weight: .semibold, design: .rounded))
                 HStack(spacing: 6) {
                     Circle()

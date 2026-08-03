@@ -1,5 +1,5 @@
 import XCTest
-@testable import VirtualCompanion
+@testable import EVA
 
 final class SentenceSegmenterTests: XCTestCase {
     func testSegmentsAcrossFragments() {

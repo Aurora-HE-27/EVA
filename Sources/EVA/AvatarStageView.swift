@@ -88,7 +88,7 @@ private struct PhotorealAvatarView: View {
             .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("真人虚拟伴侣，\(state.statusText)")
+        .accessibilityLabel("EVA 真人虚拟伴侣，\(state.statusText)")
     }
 
     private var statusPill: some View {

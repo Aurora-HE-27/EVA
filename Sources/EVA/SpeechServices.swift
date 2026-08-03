@@ -198,9 +198,9 @@ enum SpeechInputError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .speechPermissionDenied:
-            "没有语音识别权限，请在系统设置中允许。"
+            "EVA 没有语音识别权限，请在系统设置中允许。"
         case .microphonePermissionDenied:
-            "没有麦克风权限，请在系统设置中允许。"
+            "EVA 没有麦克风权限，请在系统设置中允许。"
         case .recognizerUnavailable:
             "当前无法使用中文语音识别。"
         case .onDeviceRecognitionUnavailable:
