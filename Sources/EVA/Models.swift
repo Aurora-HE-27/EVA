@@ -1,5 +1,85 @@
 import Foundation
 
+enum ChatBackendKind: String, CaseIterable, Codable, Identifiable, Sendable {
+    case ollama
+    case compatibleAPI
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .ollama: "本地 Ollama"
+        case .compatibleAPI: "大模型 API"
+        }
+    }
+}
+
+struct ChatAPIMessage: Codable, Sendable {
+    let role: String
+    let content: String
+}
+
+struct AppSettingsSnapshot: Equatable, Sendable {
+    let chatBackend: ChatBackendKind
+    let selectedModel: String
+    let serverAddress: String
+    let apiEndpointAddress: String
+    let apiModelName: String
+    let apiKey: String
+    let selectedVoiceIdentifier: String
+    let voiceRate: Double
+    let voicePitch: Double
+    let avatarImagePath: String
+}
+
+enum EVAEmotion: String, CaseIterable, Codable, Sendable {
+    case neutral
+    case warm
+    case happy
+    case concerned
+    case sad
+    case surprised
+    case focused
+
+    var displayName: String {
+        switch self {
+        case .neutral: "平静"
+        case .warm: "温柔"
+        case .happy: "开心"
+        case .concerned: "关心"
+        case .sad: "低落"
+        case .surprised: "惊喜"
+        case .focused: "认真"
+        }
+    }
+}
+
+struct EmotionDirective: Equatable, Sendable {
+    let emotion: EVAEmotion
+    let valence: Double
+    let arousal: Double
+    let intensity: Double
+
+    static let neutral = EmotionDirective(
+        emotion: .neutral,
+        valence: 0,
+        arousal: 0.2,
+        intensity: 0.25
+    )
+
+    init(
+        emotion: EVAEmotion,
+        valence: Double,
+        arousal: Double,
+        intensity: Double
+    ) {
+        self.emotion = emotion
+        self.valence = min(max(valence, -1), 1)
+        self.arousal = min(max(arousal, 0), 1)
+        self.intensity = min(max(intensity, 0), 1)
+    }
+}
+
 struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     enum Role: String, Codable, Sendable {
         case system
@@ -55,6 +135,8 @@ enum AppError: LocalizedError {
     case noModel
     case emptyResponse
     case invalidServerURL
+    case incompleteAPIConfiguration
+    case invalidAPIURL
 
     var errorDescription: String? {
         switch self {
@@ -64,6 +146,10 @@ enum AppError: LocalizedError {
             "模型没有返回内容。"
         case .invalidServerURL:
             "Ollama 服务地址无效。"
+        case .incompleteAPIConfiguration:
+            "API 配置不完整。请填写完整端点、模型名称和 API 密钥。"
+        case .invalidAPIURL:
+            "大模型 API 端点无效。"
         }
     }
 }

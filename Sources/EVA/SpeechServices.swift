@@ -14,6 +14,7 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         let text: String
         let rate: Double
         let pitch: Double
+        let emotion: EVAEmotion
     }
 
     private struct MLXSpeechRequest: Encodable {
@@ -40,8 +41,7 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
     private static let mlxModel = "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16"
     private static let mlxServerURL = URL(string: "http://127.0.0.1:11435/v1/audio/speech")!
     static var huggingFaceHomeURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "AI开发/ai模型/huggingface", directoryHint: .isDirectory)
+        ModelStorage.huggingFaceURL
     }
 
     private static let evaVoiceDesign = """
@@ -81,14 +81,17 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         _ text: String,
         voiceIdentifier: String?,
         rate: Double = 0.48,
-        pitch: Double = 1.02
+        pitch: Double = 1.02,
+        emotion: EVAEmotion = .neutral
     ) {
         let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanText.isEmpty else { return }
 
         if voiceIdentifier == Self.evaVoiceIdentifier {
             launchMLXServerIfNeeded()
-            mlxQueue.append(SpeechItem(text: cleanText, rate: rate, pitch: pitch))
+            mlxQueue.append(
+                SpeechItem(text: cleanText, rate: rate, pitch: pitch, emotion: emotion)
+            )
             beginMLXProcessingIfNeeded()
             return
         }
@@ -97,7 +100,8 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
             cleanText,
             voiceIdentifier: voiceIdentifier,
             rate: rate,
-            pitch: pitch
+            pitch: pitch,
+            emotion: emotion
         )
     }
 
@@ -125,14 +129,16 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         _ text: String,
         voiceIdentifier: String?,
         rate: Double,
-        pitch: Double
+        pitch: Double,
+        emotion: EVAEmotion
     ) {
+        let adjustment = Self.systemVoiceAdjustment(for: emotion)
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = voiceIdentifier.flatMap(AVSpeechSynthesisVoice.init(identifier:))
             ?? AVSpeechSynthesisVoice(identifier: Self.systemFallbackVoiceIdentifier)
             ?? AVSpeechSynthesisVoice(language: "zh-CN")
-        utterance.rate = Float(rate)
-        utterance.pitchMultiplier = Float(pitch)
+        utterance.rate = Float(min(max(rate * adjustment.rate, 0.35), 0.62))
+        utterance.pitchMultiplier = Float(min(max(pitch * adjustment.pitch, 0.8), 1.25))
         utterance.preUtteranceDelay = 0.02
         utterance.postUtteranceDelay = 0.04
         synthesizer.speak(utterance)
@@ -174,7 +180,8 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
                     item.text,
                     voiceIdentifier: Self.systemFallbackVoiceIdentifier,
                     rate: item.rate,
-                    pitch: item.pitch
+                    pitch: item.pitch,
+                    emotion: item.emotion
                 )
             }
         }
@@ -193,7 +200,7 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
             MLXSpeechRequest(
                 model: Self.mlxModel,
                 input: item.text,
-                instruct: Self.evaVoiceDesign,
+                instruct: Self.voiceDesign(for: item.emotion),
                 speed: relativeSpeed,
                 gender: "female",
                 pitch: relativePitch,
@@ -223,6 +230,41 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         throw lastError
     }
 
+    private static func voiceDesign(for emotion: EVAEmotion) -> String {
+        let emotionInstruction: String
+        switch emotion {
+        case .neutral:
+            emotionInstruction = "保持自然平静，语气不过度起伏。"
+        case .warm:
+            emotionInstruction = "此刻温柔亲近，语速略慢，句尾柔和。"
+        case .happy:
+            emotionInstruction = "带有克制而真实的开心，声音稍明亮，不要夸张。"
+        case .concerned:
+            emotionInstruction = "带有关心和认真倾听感，语速稍慢，不要表现得悲情。"
+        case .sad:
+            emotionInstruction = "情绪略低沉但保持稳定与支持感，不要哭腔。"
+        case .surprised:
+            emotionInstruction = "带有短暂自然的惊喜，随后恢复温和。"
+        case .focused:
+            emotionInstruction = "语气清楚、专注、可靠，减少气声。"
+        }
+        return "\(evaVoiceDesign) \(emotionInstruction)"
+    }
+
+    private static func systemVoiceAdjustment(
+        for emotion: EVAEmotion
+    ) -> (rate: Double, pitch: Double) {
+        switch emotion {
+        case .neutral: (1, 1)
+        case .warm: (0.96, 1.01)
+        case .happy: (1.04, 1.04)
+        case .concerned: (0.92, 0.98)
+        case .sad: (0.89, 0.95)
+        case .surprised: (1.06, 1.07)
+        case .focused: (0.98, 0.99)
+        }
+    }
+
     private func launchMLXServerIfNeeded() {
         guard !didAttemptMLXServerLaunch else { return }
         didAttemptMLXServerLaunch = true
@@ -242,10 +284,7 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
                 at: supportDirectory,
                 withIntermediateDirectories: true
             )
-            try FileManager.default.createDirectory(
-                at: Self.huggingFaceHomeURL,
-                withIntermediateDirectories: true
-            )
+            try ModelStorage.prepareDirectories()
             if !FileManager.default.fileExists(atPath: logURL.path) {
                 FileManager.default.createFile(atPath: logURL.path, contents: nil)
             }

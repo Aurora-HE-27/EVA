@@ -5,6 +5,7 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
+    @State private var openingSnapshot: AppSettingsSnapshot?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -12,16 +13,32 @@ struct SettingsView: View {
                 .font(.system(size: 24, weight: .bold, design: .rounded))
 
             Form {
-                TextField("Ollama 地址", text: $appState.serverAddress)
-                    .textFieldStyle(.roundedBorder)
+                Picker("文字模型来源", selection: $appState.chatBackend) {
+                    ForEach(ChatBackendKind.allCases) { backend in
+                        Text(backend.displayName).tag(backend)
+                    }
+                }
+                .pickerStyle(.segmented)
 
-                Picker("对话模型", selection: $appState.selectedModel) {
-                    if appState.models.isEmpty {
-                        Text("没有检测到模型").tag("")
+                if appState.chatBackend == .ollama {
+                    TextField("Ollama 地址", text: $appState.serverAddress)
+                        .textFieldStyle(.roundedBorder)
+
+                    Picker("对话模型", selection: $appState.selectedModel) {
+                        if appState.models.isEmpty {
+                            Text("没有检测到模型").tag("")
+                        }
+                        ForEach(appState.models) { model in
+                            Text(model.name).tag(model.name)
+                        }
                     }
-                    ForEach(appState.models) { model in
-                        Text(model.name).tag(model.name)
-                    }
+                } else {
+                    TextField("API 完整端点", text: $appState.apiEndpointAddress)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("API 模型名称", text: $appState.apiModelName)
+                        .textFieldStyle(.roundedBorder)
+                    SecureField("API 密钥", text: $appState.apiKey)
+                        .textFieldStyle(.roundedBorder)
                 }
 
                 Picker("中文声音", selection: $appState.selectedVoiceIdentifier) {
@@ -40,16 +57,16 @@ struct SettingsView: View {
                 }
 
                 HStack {
-                    Text("声音模型目录")
+                    Text("AI 模型目录")
                     Spacer()
-                    Text("~/AI开发/ai模型/huggingface")
+                    Text("~/AI开发/ai模型")
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundStyle(.secondary)
-                        .help(SpeechOutputService.huggingFaceHomeURL.path)
+                        .help(ModelStorage.rootURL.path)
                     Button("显示") {
                         NSWorkspace.shared.activateFileViewerSelecting([
-                            SpeechOutputService.huggingFaceHomeURL
+                            ModelStorage.rootURL
                         ])
                     }
                 }
@@ -88,14 +105,14 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
 
-            Text("默认形象与 Qwen3-TTS 声线均由 AI 原创，不对应或克隆任何真人。原创声线不可用时会自动回退到 Mac 本机中文语音。")
+            Text(settingsDisclosure)
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             Spacer()
 
             HStack {
-                Button("重新检测模型") {
+                Button(appState.chatBackend == .ollama ? "重新检测模型" : "检查配置") {
                     Task { await appState.refreshModels() }
                 }
 
@@ -106,6 +123,9 @@ struct SettingsView: View {
                 Spacer()
 
                 Button("取消") {
+                    if let openingSnapshot {
+                        appState.restoreSettings(openingSnapshot)
+                    }
                     dismiss()
                 }
 
@@ -119,6 +139,16 @@ struct SettingsView: View {
             }
         }
         .padding(24)
+        .onAppear {
+            openingSnapshot = appState.settingsSnapshot()
+        }
+    }
+
+    private var settingsDisclosure: String {
+        if appState.chatBackend == .compatibleAPI {
+            return "API 模式会把对话内容发送给你配置的服务商；密钥只保存在 macOS 钥匙串。形象和 Qwen3-TTS 声音仍在本机运行。"
+        }
+        return "Ollama 对话、默认形象和 Qwen3-TTS 声音均在本机运行。原创声线不可用时会自动回退到 Mac 中文语音。"
     }
 
     private func voiceLabel(_ voice: AVSpeechSynthesisVoice) -> String {

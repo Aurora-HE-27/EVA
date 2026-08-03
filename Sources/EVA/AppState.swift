@@ -11,11 +11,16 @@ final class AppState: ObservableObject {
     @Published var models: [OllamaModel] = []
     @Published var selectedModel = ""
     @Published var serverAddress = "http://127.0.0.1:11434"
+    @Published var chatBackend: ChatBackendKind = .ollama
+    @Published var apiEndpointAddress = "https://api.openai.com/v1/chat/completions"
+    @Published var apiModelName = ""
+    @Published var apiKey = ""
     @Published var selectedVoiceIdentifier = ""
     @Published var voiceRate = 0.47
     @Published var voicePitch = 1.02
     @Published var avatarImagePath = ""
     @Published var avatarState: AvatarState = .idle
+    @Published var avatarEmotion: EmotionDirective = .neutral
     @Published var isGenerating = false
     @Published var connectionStatus = "正在连接 Ollama…"
     @Published var errorMessage: String?
@@ -25,6 +30,7 @@ final class AppState: ObservableObject {
     let speechOutput = SpeechOutputService()
 
     private let ollama = OllamaClient()
+    private let compatibleAPI = OpenAICompatibleClient()
     private let store = ConversationStore()
     private var responseTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
@@ -34,6 +40,10 @@ final class AppState: ObservableObject {
     使用简体中文口语化交流，通常回答 1 到 4 句，除非用户明确要求详细解释。
     不要用 Markdown 标题，不要在每句话都称呼用户，不要假装拥有现实世界的身体经历。
     当用户情绪低落时先倾听，不要过度说教，也不要鼓励用户依赖或疏远真实的人际关系。
+    每次回复必须先输出一行不可省略的表情控制指令，然后换行输出给用户看的正文。
+    指令格式严格为：[[EVA emotion=warm valence=0.3 arousal=0.2 intensity=0.5]]
+    emotion 只能是 neutral、warm、happy、concerned、sad、surprised、focused 之一；valence 范围 -1 到 1，arousal 和 intensity 范围 0 到 1。
+    指令只描述 EVA 此刻应该呈现的情绪，不要复述或解释指令。
     """
 
     init() {
@@ -44,6 +54,13 @@ final class AppState: ObservableObject {
         serverAddress = UserDefaults.standard.string(forKey: "serverAddress")
             ?? legacyDefaults?.string(forKey: "serverAddress")
             ?? "http://127.0.0.1:11434"
+        chatBackend = UserDefaults.standard.string(forKey: "chatBackend")
+            .flatMap(ChatBackendKind.init(rawValue:))
+            ?? .ollama
+        apiEndpointAddress = UserDefaults.standard.string(forKey: "apiEndpointAddress")
+            ?? "https://api.openai.com/v1/chat/completions"
+        apiModelName = UserDefaults.standard.string(forKey: "apiModelName") ?? ""
+        apiKey = KeychainStore.loadAPIKey()
         let storedVoiceIdentifier = UserDefaults.standard.string(forKey: "voiceIdentifier")
             ?? legacyDefaults?.string(forKey: "voiceIdentifier")
             ?? ""
@@ -111,8 +128,19 @@ final class AppState: ObservableObject {
     }
 
     func refreshModels() async {
+        guard chatBackend == .ollama else {
+            let configured = !apiEndpointAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !apiModelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            connectionStatus = configured
+                ? "大模型 API 已配置 · \(apiModelName)"
+                : "大模型 API 尚未配置完整"
+            errorMessage = configured ? nil : AppError.incompleteAPIConfiguration.localizedDescription
+            return
+        }
+
         do {
-            let url = try serverURL()
+            let url = try ollamaServerURL()
             models = try await ollama.models(serverURL: url)
             connectionStatus = models.isEmpty ? "Ollama 已连接，但没有模型" : "Ollama 已连接"
             errorMessage = nil
@@ -142,10 +170,20 @@ final class AppState: ObservableObject {
 
     func send(_ text: String) {
         stopAll()
-        guard !selectedModel.isEmpty else {
-            errorMessage = AppError.noModel.localizedDescription
-            showsSettings = true
-            return
+        if chatBackend == .ollama {
+            guard !selectedModel.isEmpty else {
+                errorMessage = AppError.noModel.localizedDescription
+                showsSettings = true
+                return
+            }
+        } else {
+            guard !apiEndpointAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !apiModelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                errorMessage = AppError.incompleteAPIConfiguration.localizedDescription
+                showsSettings = true
+                return
+            }
         }
 
         let userMessage = ChatMessage(role: .user, content: text)
@@ -159,7 +197,11 @@ final class AppState: ObservableObject {
         errorMessage = nil
 
         let history = apiMessages()
+        let backend = chatBackend
         let model = selectedModel
+        let endpointAddress = apiEndpointAddress
+        let remoteModel = apiModelName
+        let remoteAPIKey = apiKey
         let voice = selectedVoiceIdentifier.isEmpty ? nil : selectedVoiceIdentifier
         let rate = voiceRate
         let pitch = voicePitch
@@ -167,27 +209,46 @@ final class AppState: ObservableObject {
         responseTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let url = try serverURL()
                 var segmenter = SentenceSegmenter()
+                var emotionParser = EmotionStreamParser()
                 var receivedContent = false
 
-                for attempt in 0..<2 {
-                    for try await token in ollama.streamChat(
-                        serverURL: url,
-                        model: model,
-                        messages: history
-                    ) {
+                let attempts = backend == .ollama ? 2 : 1
+                for attempt in 0..<attempts {
+                    let stream: AsyncThrowingStream<String, Error>
+                    if backend == .ollama {
+                        stream = ollama.streamChat(
+                            serverURL: try ollamaServerURL(),
+                            model: model,
+                            messages: history
+                        )
+                    } else {
+                        stream = compatibleAPI.streamChat(
+                            endpointURL: try compatibleAPIURL(from: endpointAddress),
+                            apiKey: remoteAPIKey,
+                            model: remoteModel,
+                            messages: history
+                        )
+                    }
+
+                    for try await token in stream {
                         guard !Task.isCancelled else { return }
-                        if token.contains(where: { !$0.isWhitespace }) {
+                        let visibleToken = emotionParser.append(token)
+                        if let directive = emotionParser.directive,
+                           directive != avatarEmotion {
+                            avatarEmotion = directive
+                        }
+                        if visibleToken.contains(where: { !$0.isWhitespace }) {
                             receivedContent = true
                         }
-                        append(token, to: assistantID)
-                        for sentence in segmenter.append(token) {
+                        append(visibleToken, to: assistantID)
+                        for sentence in segmenter.append(visibleToken) {
                             speechOutput.enqueue(
                                 sentence,
                                 voiceIdentifier: voice,
                                 rate: rate,
-                                pitch: pitch
+                                pitch: pitch,
+                                emotion: avatarEmotion.emotion
                             )
                         }
                     }
@@ -195,8 +256,26 @@ final class AppState: ObservableObject {
                     if receivedContent {
                         break
                     }
-                    if attempt == 0 {
+                    if attempt + 1 < attempts {
+                        emotionParser = EmotionStreamParser()
+                        segmenter = SentenceSegmenter()
                         try await Task.sleep(for: .milliseconds(250))
+                    }
+                }
+
+                if let trailingText = emotionParser.flush() {
+                    if trailingText.contains(where: { !$0.isWhitespace }) {
+                        receivedContent = true
+                    }
+                    append(trailingText, to: assistantID)
+                    for sentence in segmenter.append(trailingText) {
+                        speechOutput.enqueue(
+                            sentence,
+                            voiceIdentifier: voice,
+                            rate: rate,
+                            pitch: pitch,
+                            emotion: avatarEmotion.emotion
+                        )
                     }
                 }
 
@@ -205,7 +284,8 @@ final class AppState: ObservableObject {
                         remainder,
                         voiceIdentifier: voice,
                         rate: rate,
-                        pitch: pitch
+                        pitch: pitch,
+                        emotion: avatarEmotion.emotion
                     )
                 }
                 if !receivedContent {
@@ -213,10 +293,13 @@ final class AppState: ObservableObject {
                 }
 
                 isGenerating = false
-                if !speechOutput.isSpeaking {
-                    avatarState = inferredEmotion(
+                if emotionParser.directive == nil {
+                    avatarEmotion = inferredEmotion(
                         from: messages.first(where: { $0.id == assistantID })?.content ?? ""
                     )
+                }
+                if !speechOutput.isSpeaking {
+                    avatarState = .idle
                     scheduleIdleState()
                 }
                 await store.save(messages)
@@ -271,6 +354,7 @@ final class AppState: ObservableObject {
 
     func clearConversation() async {
         stopAll()
+        avatarEmotion = .neutral
         messages = [
             ChatMessage(role: .assistant, content: "我们重新开始吧。我在听。")
         ]
@@ -279,13 +363,54 @@ final class AppState: ObservableObject {
     }
 
     func saveSettings() async {
+        UserDefaults.standard.set(chatBackend.rawValue, forKey: "chatBackend")
         UserDefaults.standard.set(selectedModel, forKey: "selectedModel")
         UserDefaults.standard.set(serverAddress, forKey: "serverAddress")
+        UserDefaults.standard.set(apiEndpointAddress, forKey: "apiEndpointAddress")
+        UserDefaults.standard.set(apiModelName, forKey: "apiModelName")
         UserDefaults.standard.set(selectedVoiceIdentifier, forKey: "voiceIdentifier")
         UserDefaults.standard.set(voiceRate, forKey: "voiceRate")
         UserDefaults.standard.set(voicePitch, forKey: "voicePitch")
         UserDefaults.standard.set(avatarImagePath, forKey: "avatarImagePath")
+        do {
+            try KeychainStore.saveAPIKey(apiKey)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
         await refreshModels()
+    }
+
+    func settingsSnapshot() -> AppSettingsSnapshot {
+        AppSettingsSnapshot(
+            chatBackend: chatBackend,
+            selectedModel: selectedModel,
+            serverAddress: serverAddress,
+            apiEndpointAddress: apiEndpointAddress,
+            apiModelName: apiModelName,
+            apiKey: apiKey,
+            selectedVoiceIdentifier: selectedVoiceIdentifier,
+            voiceRate: voiceRate,
+            voicePitch: voicePitch,
+            avatarImagePath: avatarImagePath
+        )
+    }
+
+    func restoreSettings(_ snapshot: AppSettingsSnapshot) {
+        chatBackend = snapshot.chatBackend
+        selectedModel = snapshot.selectedModel
+        serverAddress = snapshot.serverAddress
+        apiEndpointAddress = snapshot.apiEndpointAddress
+        apiModelName = snapshot.apiModelName
+        apiKey = snapshot.apiKey
+        selectedVoiceIdentifier = snapshot.selectedVoiceIdentifier
+        voiceRate = snapshot.voiceRate
+        voicePitch = snapshot.voicePitch
+        avatarImagePath = snapshot.avatarImagePath
+
+        // Avatar import predates transactional settings and persists immediately.
+        // Restore its saved value as well when the user cancels this sheet.
+        UserDefaults.standard.set(snapshot.avatarImagePath, forKey: "avatarImagePath")
     }
 
     func previewVoice() {
@@ -294,7 +419,8 @@ final class AppState: ObservableObject {
             "晚上好，我是 EVA。很高兴见到你，今天想和我聊些什么？",
             voiceIdentifier: selectedVoiceIdentifier.isEmpty ? nil : selectedVoiceIdentifier,
             rate: voiceRate,
-            pitch: voicePitch
+            pitch: voicePitch,
+            emotion: avatarEmotion.emotion
         )
     }
 
@@ -347,15 +473,26 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func apiMessages() -> [OllamaClient.APIMessage] {
+    var isChatBackendReady: Bool {
+        switch chatBackend {
+        case .ollama:
+            !selectedModel.isEmpty && !models.isEmpty
+        case .compatibleAPI:
+            !apiEndpointAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !apiModelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private func apiMessages() -> [ChatAPIMessage] {
         var result = [
-            OllamaClient.APIMessage(role: "system", content: systemPrompt)
+            ChatAPIMessage(role: "system", content: systemPrompt)
         ]
         result += messages
             .filter { !$0.content.isEmpty }
             .suffix(24)
             .map {
-                OllamaClient.APIMessage(role: $0.role.rawValue, content: $0.content)
+                ChatAPIMessage(role: $0.role.rawValue, content: $0.content)
             }
         return result
     }
@@ -377,12 +514,22 @@ final class AppState: ObservableObject {
         messages.removeAll { $0.id == id && $0.content.isEmpty }
     }
 
-    private func serverURL() throws -> URL {
+    private func ollamaServerURL() throws -> URL {
         guard let url = URL(string: serverAddress),
               let scheme = url.scheme,
               ["http", "https"].contains(scheme),
               url.host != nil else {
             throw AppError.invalidServerURL
+        }
+        return url
+    }
+
+    private func compatibleAPIURL(from address: String) throws -> URL {
+        guard let url = URL(string: address.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = url.scheme,
+              scheme == "https",
+              url.host != nil else {
+            throw AppError.invalidAPIURL
         }
         return url
     }
@@ -418,14 +565,14 @@ final class AppState: ObservableObject {
         return error.localizedDescription
     }
 
-    private func inferredEmotion(from text: String) -> AvatarState {
+    private func inferredEmotion(from text: String) -> EmotionDirective {
         if text.contains("开心") || text.contains("太好了") || text.contains("哈哈") {
-            return .happy
+            return EmotionDirective(emotion: .happy, valence: 0.75, arousal: 0.58, intensity: 0.7)
         }
         if text.contains("担心") || text.contains("难过") || text.contains("抱抱") {
-            return .concerned
+            return EmotionDirective(emotion: .concerned, valence: -0.18, arousal: 0.3, intensity: 0.62)
         }
-        return .idle
+        return EmotionDirective(emotion: .warm, valence: 0.25, arousal: 0.2, intensity: 0.35)
     }
 
     private func scheduleIdleState() {
