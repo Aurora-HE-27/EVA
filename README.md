@@ -9,8 +9,9 @@ EVA 是一个完全在 Mac 上运行的本地虚拟伴侣：
 - 用户打断和停止播放
 - 会呼吸、眨眼、说话和切换状态的占位角色
 - 支持导入原创或已授权的写实成年人物肖像
+- 内置一位 AI 原创的年轻成年 EVA 默认形象
 - 真人肖像舞台、音频光环和状态氛围动画
-- 中文声音质量排序、语速、音高和试听
+- EVA 温柔自然声线预设、中文声音选择、语速、音高和试听
 - 对话本地持久化
 
 ## 环境
@@ -49,6 +50,22 @@ open dist/EVA.app
 - 只使用原创、本人或明确获得授权的形象
 
 当前版本对单张肖像提供呼吸、景深、状态色彩与语音光环。真正逐音素口型需要后续接入 talking-head 推理服务。
+
+默认角色图位于 `Resources/Assets/EVA-Portrait-Young-v1.png`，由图像模型原创生成，不对应任何真人。用户仍可以在设置中导入本人、原创或明确获得授权的替代形象。
+
+## 声音
+
+“EVA · 原创声线”使用适用于 Apple Silicon 的 MLX-Audio 与 Qwen3-TTS VoiceDesign，根据文字描述实时生成，不采集或克隆任何真人声音。App 会尝试启动本机 `~/.local/bin/mlx_audio.server`，复用已加载模型；运行环境不可用时自动回退到 Mac 中文语音。
+
+原创声音设计样本位于 `Resources/Audio/EVA-Voice-Preview-v1_000.wav`。本机运行环境：
+
+```bash
+brew install uv
+brew install python@3.12
+uv tool install --python /opt/homebrew/bin/python3.12 --force 'mlx-audio[server]' --prerelease=allow
+```
+
+首次使用会下载 `mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16`，后续会复用本地模型缓存。
 
 ## Ollama
 

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 @main
@@ -11,6 +12,13 @@ struct EVAApp: App {
                 .frame(minWidth: 920, minHeight: 620)
                 .task {
                     await appState.start()
+                }
+                .onReceive(
+                    NotificationCenter.default.publisher(
+                        for: NSApplication.willTerminateNotification
+                    )
+                ) { _ in
+                    appState.shutdown()
                 }
         }
         .defaultSize(width: 1120, height: 760)

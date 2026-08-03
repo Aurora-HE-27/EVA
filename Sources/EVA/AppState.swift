@@ -44,18 +44,38 @@ final class AppState: ObservableObject {
         serverAddress = UserDefaults.standard.string(forKey: "serverAddress")
             ?? legacyDefaults?.string(forKey: "serverAddress")
             ?? "http://127.0.0.1:11434"
-        selectedVoiceIdentifier = UserDefaults.standard.string(forKey: "voiceIdentifier")
+        let storedVoiceIdentifier = UserDefaults.standard.string(forKey: "voiceIdentifier")
             ?? legacyDefaults?.string(forKey: "voiceIdentifier")
             ?? ""
-        voiceRate = UserDefaults.standard.object(forKey: "voiceRate") as? Double
-            ?? legacyDefaults?.object(forKey: "voiceRate") as? Double
-            ?? 0.47
-        voicePitch = UserDefaults.standard.object(forKey: "voicePitch") as? Double
-            ?? legacyDefaults?.object(forKey: "voicePitch") as? Double
-            ?? 1.02
-        avatarImagePath = UserDefaults.standard.string(forKey: "avatarImagePath")
+        let didMigrateToVoiceDesign = UserDefaults.standard.bool(
+            forKey: "didMigrateToQwenVoiceDesign"
+        )
+        let usesDefaultVoice = storedVoiceIdentifier.isEmpty || !didMigrateToVoiceDesign
+        selectedVoiceIdentifier = usesDefaultVoice
+            ? SpeechOutputService.evaVoiceIdentifier
+            : storedVoiceIdentifier
+        voiceRate = usesDefaultVoice
+            ? 0.46
+            : UserDefaults.standard.object(forKey: "voiceRate") as? Double
+                ?? legacyDefaults?.object(forKey: "voiceRate") as? Double
+                ?? 0.46
+        voicePitch = usesDefaultVoice
+            ? 1.06
+            : UserDefaults.standard.object(forKey: "voicePitch") as? Double
+                ?? legacyDefaults?.object(forKey: "voicePitch") as? Double
+                ?? 1.06
+
+        let storedAvatarPath = UserDefaults.standard.string(forKey: "avatarImagePath")
             ?? legacyDefaults?.string(forKey: "avatarImagePath")
             ?? ""
+        avatarImagePath = storedAvatarPath.isEmpty ? Self.bundledAvatarPath : storedAvatarPath
+
+        if usesDefaultVoice {
+            UserDefaults.standard.set(selectedVoiceIdentifier, forKey: "voiceIdentifier")
+            UserDefaults.standard.set(voiceRate, forKey: "voiceRate")
+            UserDefaults.standard.set(voicePitch, forKey: "voicePitch")
+            UserDefaults.standard.set(true, forKey: "didMigrateToQwenVoiceDesign")
+        }
 
         speechOutput.onSpeakingChanged = { [weak self] isSpeaking in
             guard let self else { return }
@@ -244,6 +264,11 @@ final class AppState: ObservableObject {
         avatarState = .idle
     }
 
+    func shutdown() {
+        stopAll()
+        speechOutput.shutdown()
+    }
+
     func clearConversation() async {
         stopAll()
         messages = [
@@ -266,11 +291,21 @@ final class AppState: ObservableObject {
     func previewVoice() {
         speechOutput.stop()
         speechOutput.enqueue(
-            "晚上好，我会一直认真听你说话。",
+            "晚上好，我是 EVA。很高兴见到你，今天想和我聊些什么？",
             voiceIdentifier: selectedVoiceIdentifier.isEmpty ? nil : selectedVoiceIdentifier,
             rate: voiceRate,
             pitch: voicePitch
         )
+    }
+
+    var avatarDisplayName: String {
+        guard !avatarImagePath.isEmpty else { return "尚未导入" }
+        return avatarImagePath == Self.bundledAvatarPath ? "EVA 原创形象" : "自定义形象"
+    }
+
+    func useBundledAvatar() {
+        avatarImagePath = Self.bundledAvatarPath
+        UserDefaults.standard.set(avatarImagePath, forKey: "avatarImagePath")
     }
 
     func chooseAvatarImage() {
@@ -323,6 +358,14 @@ final class AppState: ObservableObject {
                 OllamaClient.APIMessage(role: $0.role.rawValue, content: $0.content)
             }
         return result
+    }
+
+    private static var bundledAvatarPath: String {
+        Bundle.main.path(
+            forResource: "EVA-Portrait-Young-v1",
+            ofType: "png",
+            inDirectory: "Assets"
+        ) ?? ""
     }
 
     private func append(_ token: String, to id: UUID) {
