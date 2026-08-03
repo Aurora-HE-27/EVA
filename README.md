@@ -60,6 +60,15 @@ http://127.0.0.1:11434
 
 应用会读取 `/api/tags` 并在设置中显示本机模型。建议优先使用 7B–9B 中文能力较好的量化模型。
 
+当前项目提供了一个修正第三方 Qwen3 思考模板的 EVA 派生模型。它复用已有权重，不会复制模型文件：
+
+```bash
+ollama stop eva 2>/dev/null || true
+ollama create eva -f Ollama/EVA.Modelfile
+```
+
+创建后重新打开应用，EVA 会自动优先选择并记住 `eva:latest`。如果设置中仍保存着原始故障模型，应用也会自动迁移。直接选择原始的 `Qwen3-14B-Uncensored-GGUF` 可能因为其 GGUF 聊天模板缺陷而只返回思考内容、没有最终正文。
+
 ## 下一阶段
 
 当前角色由 SwiftUI 程序绘制，`AvatarView` 已经与监听、思考和说话状态解耦。接入 Live2D 时，可以保留 `AppState` 和语音流水线，仅把 `AvatarView` 换为 `WKWebView`/Cubism 渲染器。

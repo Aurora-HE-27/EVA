@@ -71,7 +71,7 @@ struct OllamaClient: Sendable {
                             model: model,
                             messages: messages,
                             stream: true,
-                            think: true,
+                            think: !Self.isEVAModel(model),
                             options: .init(temperature: 0.75, num_ctx: 8_192)
                         )
                     )
@@ -121,6 +121,11 @@ struct OllamaClient: Sendable {
             let message = String(data: data, encoding: .utf8) ?? "HTTP \(response.statusCode)"
             throw OllamaServiceError(message: message)
         }
+    }
+
+    private static func isEVAModel(_ name: String) -> Bool {
+        let normalized = name.lowercased()
+        return normalized == "eva" || normalized.hasPrefix("eva:")
     }
 }
 
