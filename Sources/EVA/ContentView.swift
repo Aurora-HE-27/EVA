@@ -8,6 +8,7 @@ struct ContentView: View {
         HSplitView {
             AvatarStageView(
                 state: appState.avatarState,
+                emotion: appState.avatarEmotion,
                 isSpeaking: appState.speechOutput.isSpeaking,
                 imagePath: appState.avatarImagePath
             )
@@ -27,7 +28,7 @@ struct ContentView: View {
         .sheet(isPresented: $appState.showsSettings) {
             SettingsView()
                 .environmentObject(appState)
-                .frame(width: 520, height: 420)
+                .frame(width: 640, height: 560)
         }
         .alert("清空这段对话？", isPresented: $showsClearConfirmation) {
             Button("取消", role: .cancel) {}
@@ -46,7 +47,7 @@ struct ContentView: View {
                     .font(.system(size: 19, weight: .semibold, design: .rounded))
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(appState.models.isEmpty ? Color.orange : Color.green)
+                        .fill(appState.isChatBackendReady ? Color.green : Color.orange)
                         .frame(width: 7, height: 7)
                     Text(appState.connectionStatus)
                         .font(.caption)

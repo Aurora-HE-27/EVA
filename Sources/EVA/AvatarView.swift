@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AvatarView: View {
     let state: AvatarState
+    let emotion: EmotionDirective
     let isSpeaking: Bool
 
     var body: some View {
@@ -108,7 +109,10 @@ struct AvatarView: View {
 
             Capsule()
                 .fill(Color(red: 0.64, green: 0.19, blue: 0.28))
-                .frame(width: state == .happy ? 36 : 28, height: mouth)
+                .frame(
+                    width: emotion.emotion == .happy ? 38 : 28,
+                    height: mouth + (emotion.emotion == .surprised ? 5 : 0)
+                )
                 .overlay(alignment: .top) {
                     Capsule()
                         .fill(.white.opacity(isSpeaking ? 0.55 : 0))

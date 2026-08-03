@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AvatarStageView: View {
     let state: AvatarState
+    let emotion: EmotionDirective
     let isSpeaking: Bool
     let imagePath: String
 
@@ -16,11 +17,12 @@ struct AvatarStageView: View {
             PhotorealAvatarView(
                 portrait: portrait,
                 state: state,
+                emotion: emotion,
                 isSpeaking: isSpeaking
             )
         } else {
             ZStack(alignment: .topTrailing) {
-                AvatarView(state: state, isSpeaking: isSpeaking)
+                AvatarView(state: state, emotion: emotion, isSpeaking: isSpeaking)
 
                 Label("在设置中导入真人肖像", systemImage: "photo.badge.plus")
                     .font(.caption)
@@ -37,6 +39,7 @@ struct AvatarStageView: View {
 private struct PhotorealAvatarView: View {
     let portrait: NSImage
     let state: AvatarState
+    let emotion: EmotionDirective
     let isSpeaking: Bool
 
     var body: some View {
@@ -44,6 +47,7 @@ private struct PhotorealAvatarView: View {
             let time = timeline.date.timeIntervalSinceReferenceDate
             let breathingScale = 1.025 + sin(time * 1.25) * 0.004
             let thinkingDrift = state == .thinking ? sin(time * 0.7) * 4 : 0
+            let microGaze = sin(time * 0.42) * 1.2 * emotion.intensity
 
             ZStack {
                 Color.black
@@ -51,11 +55,16 @@ private struct PhotorealAvatarView: View {
                 Image(nsImage: portrait)
                     .resizable()
                     .scaledToFill()
-                    .scaleEffect(breathingScale)
-                    .offset(x: thinkingDrift)
-                    .saturation(state == .concerned ? 0.82 : 1)
-                    .brightness(state == .listening ? 0.035 : 0)
+                    .scaleEffect(breathingScale + emotionScale)
+                    .offset(
+                        x: thinkingDrift + microGaze + emotionOffset.width,
+                        y: emotionOffset.height
+                    )
+                    .rotationEffect(.degrees(emotionRotation))
+                    .saturation(emotionSaturation)
+                    .brightness(emotionBrightness + (state == .listening ? 0.025 : 0))
                     .animation(.easeInOut(duration: 0.5), value: state)
+                    .animation(.spring(response: 0.7, dampingFraction: 0.82), value: emotion)
 
                 LinearGradient(
                     colors: [
@@ -76,6 +85,8 @@ private struct PhotorealAvatarView: View {
                     startRadius: 5,
                     endRadius: 330
                 )
+
+                emotionTint
 
                 VStack {
                     Spacer()
@@ -99,6 +110,11 @@ private struct PhotorealAvatarView: View {
                 .shadow(color: statusColor, radius: 6)
             Text(state.statusText)
                 .font(.system(size: 13, weight: .medium, design: .rounded))
+            if emotion.emotion != .neutral {
+                Text("· \(emotion.emotion.displayName)")
+                    .font(.system(size: 12, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.68))
+            }
         }
         .foregroundStyle(.white.opacity(0.9))
         .padding(.horizontal, 14)
@@ -107,7 +123,17 @@ private struct PhotorealAvatarView: View {
     }
 
     private var statusColor: Color {
-        switch state {
+        if state == .idle || state == .speaking {
+            switch emotion.emotion {
+            case .happy: return .green
+            case .concerned, .sad: return .orange
+            case .surprised: return .yellow
+            case .focused: return .indigo
+            case .warm: return .pink
+            case .neutral: break
+            }
+        }
+        return switch state {
         case .idle: .mint
         case .listening: .cyan
         case .thinking: .yellow
@@ -115,6 +141,66 @@ private struct PhotorealAvatarView: View {
         case .happy: .green
         case .concerned: .orange
         }
+    }
+
+    private var emotionScale: Double {
+        switch emotion.emotion {
+        case .happy, .surprised: 0.004 * emotion.intensity
+        case .sad, .concerned: -0.002 * emotion.intensity
+        default: 0
+        }
+    }
+
+    private var emotionOffset: CGSize {
+        switch emotion.emotion {
+        case .happy: CGSize(width: 0, height: -2 * emotion.intensity)
+        case .concerned: CGSize(width: -1.5 * emotion.intensity, height: 1.5 * emotion.intensity)
+        case .sad: CGSize(width: 0, height: 3 * emotion.intensity)
+        case .surprised: CGSize(width: 1.5 * emotion.intensity, height: -1)
+        default: .zero
+        }
+    }
+
+    private var emotionRotation: Double {
+        switch emotion.emotion {
+        case .warm, .happy: -0.45 * emotion.intensity
+        case .concerned: 0.8 * emotion.intensity
+        case .sad: 0.35 * emotion.intensity
+        default: 0
+        }
+    }
+
+    private var emotionSaturation: Double {
+        switch emotion.emotion {
+        case .happy, .surprised: 1 + 0.08 * emotion.intensity
+        case .sad: 1 - 0.24 * emotion.intensity
+        case .concerned: 1 - 0.12 * emotion.intensity
+        default: 1
+        }
+    }
+
+    private var emotionBrightness: Double {
+        switch emotion.emotion {
+        case .happy, .warm: 0.025 * emotion.intensity
+        case .sad: -0.035 * emotion.intensity
+        default: 0
+        }
+    }
+
+    private var emotionTint: some View {
+        let color: Color = switch emotion.emotion {
+        case .happy: .yellow
+        case .warm: .pink
+        case .concerned: .orange
+        case .sad: .blue
+        case .surprised: .cyan
+        case .focused: .indigo
+        case .neutral: .clear
+        }
+        return color
+            .opacity(0.045 * emotion.intensity)
+            .blendMode(.softLight)
+            .allowsHitTesting(false)
     }
 }
 

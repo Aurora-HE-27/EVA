@@ -1,11 +1,6 @@
 import Foundation
 
 struct OllamaClient: Sendable {
-    struct APIMessage: Codable, Sendable {
-        let role: String
-        let content: String
-    }
-
     private struct TagsResponse: Decodable {
         struct Model: Decodable {
             let name: String
@@ -16,7 +11,7 @@ struct OllamaClient: Sendable {
 
     private struct ChatRequest: Encodable {
         let model: String
-        let messages: [APIMessage]
+        let messages: [ChatAPIMessage]
         let stream: Bool
         let think: Bool
         let options: Options
@@ -57,7 +52,7 @@ struct OllamaClient: Sendable {
     func streamChat(
         serverURL: URL,
         model: String,
-        messages: [APIMessage]
+        messages: [ChatAPIMessage]
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -90,7 +85,7 @@ struct OllamaClient: Sendable {
                             from: Data(line.utf8)
                         )
                         if let error = chunk.error {
-                            throw OllamaServiceError(message: error)
+                            throw ChatServiceError(message: error)
                         }
                         if let token = chunk.message?.content, !token.isEmpty {
                             continuation.yield(token)
@@ -119,7 +114,7 @@ struct OllamaClient: Sendable {
         }
         guard 200..<300 ~= response.statusCode else {
             let message = String(data: data, encoding: .utf8) ?? "HTTP \(response.statusCode)"
-            throw OllamaServiceError(message: message)
+            throw ChatServiceError(message: message)
         }
     }
 
@@ -129,7 +124,7 @@ struct OllamaClient: Sendable {
     }
 }
 
-struct OllamaServiceError: LocalizedError {
+struct ChatServiceError: LocalizedError {
     let message: String
 
     var errorDescription: String? { message }
