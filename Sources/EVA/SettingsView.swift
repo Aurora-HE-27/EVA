@@ -24,8 +24,15 @@ struct SettingsView: View {
                 }
 
                 Picker("中文声音", selection: $appState.selectedVoiceIdentifier) {
+                    Text("EVA · 原创声线（Qwen3-TTS）")
+                        .tag(SpeechOutputService.evaVoiceIdentifier)
                     Text("系统默认").tag("")
-                    ForEach(SpeechOutputService.availableVoices, id: \.identifier) { voice in
+                    ForEach(
+                        SpeechOutputService.availableVoices.filter {
+                            $0.identifier != SpeechOutputService.evaVoiceIdentifier
+                        },
+                        id: \.identifier
+                    ) { voice in
                         Text(voiceLabel(voice))
                             .tag(voice.identifier)
                     }
@@ -52,8 +59,12 @@ struct SettingsView: View {
                 HStack {
                     Text("真人形象")
                     Spacer()
-                    Text(appState.avatarImagePath.isEmpty ? "尚未导入" : "已导入")
+                    Text(appState.avatarDisplayName)
                         .foregroundStyle(.secondary)
+                    Button("使用默认") {
+                        appState.useBundledAvatar()
+                    }
+                    .disabled(appState.avatarDisplayName == "EVA 原创形象")
                     Button("选择图片…") {
                         appState.chooseAvatarImage()
                     }
@@ -61,7 +72,7 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
 
-            Text("请只使用原创形象、本人形象或已获得明确授权的人物肖像与声音。语音识别仍坚持使用系统的设备端中文模型。")
+            Text("默认形象与 Qwen3-TTS 声线均由 AI 原创，不对应或克隆任何真人。原创声线不可用时会自动回退到 Mac 本机中文语音。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
