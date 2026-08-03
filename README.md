@@ -67,6 +67,19 @@ uv tool install --python /opt/homebrew/bin/python3.12 --force 'mlx-audio[server]
 
 首次使用会下载 `mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16`，后续会复用本地模型缓存。
 
+EVA 将 Hugging Face 权重统一保存在以下独立目录，不会放入项目或提交到 GitHub：
+
+```text
+/Users/hewenkai/AI开发/ai模型/huggingface
+```
+
+可以在 EVA 设置中查看并用 Finder 打开该目录。命令行管理缓存时使用：
+
+```bash
+HF_HOME='/Users/hewenkai/AI开发/ai模型/huggingface' \
+  ~/.local/share/uv/tools/mlx-audio/bin/hf cache ls
+```
+
 ## Ollama
 
 默认连接：

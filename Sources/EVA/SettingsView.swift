@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import SwiftUI
 
@@ -35,6 +36,21 @@ struct SettingsView: View {
                     ) { voice in
                         Text(voiceLabel(voice))
                             .tag(voice.identifier)
+                    }
+                }
+
+                HStack {
+                    Text("声音模型目录")
+                    Spacer()
+                    Text("~/AI开发/ai模型/huggingface")
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .foregroundStyle(.secondary)
+                        .help(SpeechOutputService.huggingFaceHomeURL.path)
+                    Button("显示") {
+                        NSWorkspace.shared.activateFileViewerSelecting([
+                            SpeechOutputService.huggingFaceHomeURL
+                        ])
                     }
                 }
 
