@@ -1,0 +1,52 @@
+name: EVA
+
+options:
+  bundleIdPrefix: com.aurorahe27
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "14.0"
+
+settings:
+  base:
+    ARCHS: arm64
+    DEVELOPMENT_LANGUAGE: zh-Hans
+    ENABLE_HARDENED_RUNTIME: YES
+    GENERATE_INFOPLIST_FILE: NO
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    SWIFT_VERSION: "5.10"
+
+targets:
+  EVA:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/EVA
+    resources:
+      - path: Resources/Assets
+      - path: Resources/Audio
+    settings:
+      base:
+        CODE_SIGN_ENTITLEMENTS: Resources/EVA.entitlements
+        CURRENT_PROJECT_VERSION: 8
+        ENABLE_APP_SANDBOX: YES
+        INFOPLIST_FILE: Resources/Info.plist
+        MARKETING_VERSION: 0.5.0
+        PRODUCT_BUNDLE_IDENTIFIER: com.aurorahe27.eva
+        PRODUCT_NAME: EVA
+    scheme:
+      gatherCoverageData: true
+      testTargets:
+        - EVATests
+
+  EVATests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/EVATests
+    dependencies:
+      - target: EVA
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.aurorahe27.eva.tests
+

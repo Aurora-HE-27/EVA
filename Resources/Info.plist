@@ -25,7 +25,7 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSHumanReadableCopyright</key>
-    <string>仅使用原创或已获授权的人物形象和声音。</string>
+    <string>Copyright © 2026 EVA. All rights reserved.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>EVA 需要使用麦克风与你进行语音对话。</string>
     <key>NSSpeechRecognitionUsageDescription</key>
