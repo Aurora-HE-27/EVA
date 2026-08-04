@@ -1,8 +1,5 @@
-import AppKit
-import AVFoundation
 import Combine
 import Foundation
-import UniformTypeIdentifiers
 
 @MainActor
 final class AppState: ObservableObject {
@@ -18,7 +15,6 @@ final class AppState: ObservableObject {
     @Published var selectedVoiceIdentifier = ""
     @Published var voiceRate = 0.47
     @Published var voicePitch = 1.02
-    @Published var avatarImagePath = ""
     @Published var avatarState: AvatarState = .idle
     @Published var avatarEmotion: EmotionDirective = .neutral
     @Published var isGenerating = false
@@ -80,11 +76,6 @@ final class AppState: ObservableObject {
             : UserDefaults.standard.object(forKey: "voicePitch") as? Double
                 ?? legacyDefaults?.object(forKey: "voicePitch") as? Double
                 ?? 1.06
-
-        let storedAvatarPath = UserDefaults.standard.string(forKey: "avatarImagePath")
-            ?? legacyDefaults?.string(forKey: "avatarImagePath")
-            ?? ""
-        avatarImagePath = storedAvatarPath.isEmpty ? Self.bundledAvatarPath : storedAvatarPath
 
         if usesDefaultVoice {
             UserDefaults.standard.set(selectedVoiceIdentifier, forKey: "voiceIdentifier")
@@ -261,7 +252,7 @@ final class AppState: ObservableObject {
                                 voiceIdentifier: voice,
                                 rate: rate,
                                 pitch: pitch,
-                                emotion: avatarEmotion.emotion
+                                emotion: avatarEmotion
                             )
                         }
                     }
@@ -287,7 +278,7 @@ final class AppState: ObservableObject {
                             voiceIdentifier: voice,
                             rate: rate,
                             pitch: pitch,
-                            emotion: avatarEmotion.emotion
+                            emotion: avatarEmotion
                         )
                     }
                 }
@@ -298,7 +289,7 @@ final class AppState: ObservableObject {
                         voiceIdentifier: voice,
                         rate: rate,
                         pitch: pitch,
-                        emotion: avatarEmotion.emotion
+                        emotion: avatarEmotion
                     )
                 }
                 if !receivedContent {
@@ -384,7 +375,6 @@ final class AppState: ObservableObject {
         UserDefaults.standard.set(selectedVoiceIdentifier, forKey: "voiceIdentifier")
         UserDefaults.standard.set(voiceRate, forKey: "voiceRate")
         UserDefaults.standard.set(voicePitch, forKey: "voicePitch")
-        UserDefaults.standard.set(avatarImagePath, forKey: "avatarImagePath")
         do {
             try KeychainStore.saveAPIKey(apiKey)
         } catch {
@@ -404,8 +394,7 @@ final class AppState: ObservableObject {
             apiKey: apiKey,
             selectedVoiceIdentifier: selectedVoiceIdentifier,
             voiceRate: voiceRate,
-            voicePitch: voicePitch,
-            avatarImagePath: avatarImagePath
+            voicePitch: voicePitch
         )
     }
 
@@ -419,11 +408,6 @@ final class AppState: ObservableObject {
         selectedVoiceIdentifier = snapshot.selectedVoiceIdentifier
         voiceRate = snapshot.voiceRate
         voicePitch = snapshot.voicePitch
-        avatarImagePath = snapshot.avatarImagePath
-
-        // Avatar import predates transactional settings and persists immediately.
-        // Restore its saved value as well when the user cancels this sheet.
-        UserDefaults.standard.set(snapshot.avatarImagePath, forKey: "avatarImagePath")
     }
 
     func previewVoice() {
@@ -433,57 +417,8 @@ final class AppState: ObservableObject {
             voiceIdentifier: selectedVoiceIdentifier.isEmpty ? nil : selectedVoiceIdentifier,
             rate: voiceRate,
             pitch: voicePitch,
-            emotion: avatarEmotion.emotion
+            emotion: avatarEmotion
         )
-    }
-
-    var avatarDisplayName: String {
-        guard !avatarImagePath.isEmpty else { return "尚未导入" }
-        return avatarImagePath == Self.bundledAvatarPath ? "EVA 原创形象" : "自定义形象"
-    }
-
-    func useBundledAvatar() {
-        avatarImagePath = Self.bundledAvatarPath
-        UserDefaults.standard.set(avatarImagePath, forKey: "avatarImagePath")
-    }
-
-    func chooseAvatarImage() {
-        let panel = NSOpenPanel()
-        panel.title = "选择原创或已获授权的成年人物肖像"
-        panel.prompt = "使用此形象"
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.png, .jpeg, .heic]
-
-        guard panel.runModal() == .OK, let source = panel.url else { return }
-
-        do {
-            let support = FileManager.default.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            ).first!
-            let directory = support.appending(
-                path: "EVA/Avatar",
-                directoryHint: .isDirectory
-            )
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true
-            )
-            let ext = source.pathExtension.isEmpty ? "png" : source.pathExtension
-            let destination = directory.appending(path: "companion.\(ext)")
-
-            if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
-            }
-            try FileManager.default.copyItem(at: source, to: destination)
-            avatarImagePath = destination.path
-            UserDefaults.standard.set(avatarImagePath, forKey: "avatarImagePath")
-            errorMessage = nil
-        } catch {
-            errorMessage = "导入角色图片失败：\(error.localizedDescription)"
-        }
     }
 
     var isChatBackendReady: Bool {
@@ -508,14 +443,6 @@ final class AppState: ObservableObject {
                 ChatAPIMessage(role: $0.role.rawValue, content: $0.content)
             }
         return result
-    }
-
-    private static var bundledAvatarPath: String {
-        Bundle.main.path(
-            forResource: "EVA-Portrait-Young-v1",
-            ofType: "png",
-            inDirectory: "Assets"
-        ) ?? ""
     }
 
     private func append(_ token: String, to id: UUID) {

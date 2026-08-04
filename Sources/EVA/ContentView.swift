@@ -5,25 +5,13 @@ struct ContentView: View {
     @State private var showsClearConfirmation = false
 
     var body: some View {
-        HSplitView {
-            AvatarStageView(
-                state: appState.avatarState,
-                emotion: appState.avatarEmotion,
-                isSpeaking: appState.speechOutput.isSpeaking,
-                imagePath: appState.avatarImagePath
-            )
-            .frame(minWidth: 360, idealWidth: 440)
-            .padding(18)
-
-            VStack(spacing: 0) {
-                header
-                Divider().opacity(0.45)
-                conversation
-                composer
-            }
-            .frame(minWidth: 500)
-            .background(Color(nsColor: .windowBackgroundColor))
+        VStack(spacing: 0) {
+            header
+            Divider().opacity(0.45)
+            conversation
+            composer
         }
+        .frame(minWidth: 520, idealWidth: 760, minHeight: 620)
         .background(Color(nsColor: .windowBackgroundColor))
         .sheet(isPresented: $appState.showsSettings) {
             SettingsView()
@@ -42,6 +30,22 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [.indigo, emotionAccent],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                Image(systemName: appState.speechOutput.isSpeaking ? "waveform" : "sparkles")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .symbolEffect(.variableColor.iterative, isActive: appState.speechOutput.isSpeaking)
+            }
+            .frame(width: 40, height: 40)
+
             VStack(alignment: .leading, spacing: 3) {
                 Text("EVA")
                     .font(.system(size: 19, weight: .semibold, design: .rounded))
@@ -49,9 +53,10 @@ struct ContentView: View {
                     Circle()
                         .fill(appState.isChatBackendReady ? Color.green : Color.orange)
                         .frame(width: 7, height: 7)
-                    Text(appState.connectionStatus)
+                    Text("\(appState.avatarState.statusText) · \(appState.connectionStatus)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
 
@@ -84,6 +89,18 @@ struct ContentView: View {
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 15)
+    }
+
+    private var emotionAccent: Color {
+        switch appState.avatarEmotion.emotion {
+        case .neutral: .cyan
+        case .warm: .pink
+        case .happy: .yellow
+        case .concerned: .orange
+        case .sad: .blue
+        case .surprised: .mint
+        case .focused: .purple
+        }
     }
 
     private var conversation: some View {

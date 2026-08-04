@@ -89,19 +89,6 @@ struct SettingsView: View {
                         .frame(width: 34)
                 }
 
-                HStack {
-                    Text("真人形象")
-                    Spacer()
-                    Text(appState.avatarDisplayName)
-                        .foregroundStyle(.secondary)
-                    Button("使用默认") {
-                        appState.useBundledAvatar()
-                    }
-                    .disabled(appState.avatarDisplayName == "EVA 原创形象")
-                    Button("选择图片…") {
-                        appState.chooseAvatarImage()
-                    }
-                }
             }
             .formStyle(.grouped)
 
@@ -148,7 +135,7 @@ struct SettingsView: View {
         if appState.chatBackend == .compatibleAPI {
             return "可填写服务商根地址或完整 Chat Completions 端点，EVA 会自动补全常见路径。API 模式会发送对话正文；密钥只保存在 macOS 钥匙串。"
         }
-        return "Ollama 对话、默认形象和 Qwen3-TTS 声音均在本机运行。原创声线不可用时会自动回退到 Mac 中文语音。"
+        return "Ollama 对话、设备端语音识别和 Qwen3-TTS 声音均在本机运行。原创声线不可用时会自动回退到系统中文语音。"
     }
 
     private func voiceLabel(_ voice: AVSpeechSynthesisVoice) -> String {

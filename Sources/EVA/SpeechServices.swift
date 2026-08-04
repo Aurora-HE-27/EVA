@@ -14,7 +14,7 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         let text: String
         let rate: Double
         let pitch: Double
-        let emotion: EVAEmotion
+        let emotion: EmotionDirective
     }
 
     private struct MLXSpeechRequest: Encodable {
@@ -82,7 +82,7 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         voiceIdentifier: String?,
         rate: Double = 0.48,
         pitch: Double = 1.02,
-        emotion: EVAEmotion = .neutral
+        emotion: EmotionDirective = .neutral
     ) {
         let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanText.isEmpty else { return }
@@ -90,7 +90,12 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         if voiceIdentifier == Self.evaVoiceIdentifier {
             launchMLXServerIfNeeded()
             mlxQueue.append(
-                SpeechItem(text: cleanText, rate: rate, pitch: pitch, emotion: emotion)
+                SpeechItem(
+                    text: cleanText,
+                    rate: rate,
+                    pitch: pitch,
+                    emotion: emotion
+                )
             )
             beginMLXProcessingIfNeeded()
             return
@@ -130,7 +135,7 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         voiceIdentifier: String?,
         rate: Double,
         pitch: Double,
-        emotion: EVAEmotion
+        emotion: EmotionDirective
     ) {
         let adjustment = Self.systemVoiceAdjustment(for: emotion)
         let utterance = AVSpeechUtterance(string: text)
@@ -171,7 +176,7 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
                 player.play()
 
                 while player.isPlaying, !Task.isCancelled {
-                    try await Task.sleep(for: .milliseconds(60))
+                    try await Task.sleep(for: .milliseconds(50))
                 }
             } catch is CancellationError {
                 return
@@ -230,9 +235,9 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         throw lastError
     }
 
-    private static func voiceDesign(for emotion: EVAEmotion) -> String {
+    private static func voiceDesign(for emotion: EmotionDirective) -> String {
         let emotionInstruction: String
-        switch emotion {
+        switch emotion.emotion {
         case .neutral:
             emotionInstruction = "保持自然平静，语气不过度起伏。"
         case .warm:
@@ -248,13 +253,26 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         case .focused:
             emotionInstruction = "语气清楚、专注、可靠，减少气声。"
         }
-        return "\(evaVoiceDesign) \(emotionInstruction)"
+        let energyDescription: String
+        if emotion.arousal < 0.3 {
+            energyDescription = "整体能量偏低，留出自然呼吸和短停顿。"
+        } else if emotion.arousal > 0.68 {
+            energyDescription = "整体能量较高，但保持真实对话感，不要像播音或表演。"
+        } else {
+            energyDescription = "整体能量适中，节奏自然。"
+        }
+        let expressionDescription = emotion.intensity < 0.35
+            ? "情绪只轻微流露。"
+            : emotion.intensity > 0.75
+                ? "情绪清晰可感，但避免夸张。"
+                : "情绪表达克制而明确。"
+        return "\(evaVoiceDesign) \(emotionInstruction) \(energyDescription) \(expressionDescription)"
     }
 
     private static func systemVoiceAdjustment(
-        for emotion: EVAEmotion
+        for emotion: EmotionDirective
     ) -> (rate: Double, pitch: Double) {
-        switch emotion {
+        let base: (rate: Double, pitch: Double) = switch emotion.emotion {
         case .neutral: (1, 1)
         case .warm: (0.96, 1.01)
         case .happy: (1.04, 1.04)
@@ -263,6 +281,9 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         case .surprised: (1.06, 1.07)
         case .focused: (0.98, 0.99)
         }
+        let arousalRate = 0.94 + emotion.arousal * 0.12
+        let valencePitch = 1 + emotion.valence * 0.025
+        return (base.rate * arousalRate, base.pitch * valencePitch)
     }
 
     private func launchMLXServerIfNeeded() {

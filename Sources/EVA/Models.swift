@@ -29,7 +29,6 @@ struct AppSettingsSnapshot: Equatable, Sendable {
     let selectedVoiceIdentifier: String
     let voiceRate: Double
     let voicePitch: Double
-    let avatarImagePath: String
 }
 
 enum EVAEmotion: String, CaseIterable, Codable, Sendable {
