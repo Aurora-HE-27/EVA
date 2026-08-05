@@ -47,7 +47,7 @@ struct ContentView: View {
             .frame(width: 40, height: 40)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("EVA")
+                Text(appState.profile.sanitizedName)
                     .font(.system(size: 19, weight: .semibold, design: .rounded))
                 HStack(spacing: 6) {
                     Circle()

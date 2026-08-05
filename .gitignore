@@ -5,3 +5,5 @@ dist/
 xcuserdata/
 DerivedData/
 EVA.xcodeproj/
+Resources/Models/*
+!Resources/Models/.gitkeep
