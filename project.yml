@@ -46,10 +46,10 @@ targets:
     settings:
       base:
         CODE_SIGN_ENTITLEMENTS: Resources/EVA.entitlements
-        CURRENT_PROJECT_VERSION: 9
+        CURRENT_PROJECT_VERSION: 10
         ENABLE_APP_SANDBOX: YES
         INFOPLIST_FILE: Resources/Info.plist
-        MARKETING_VERSION: 0.6.0
+        MARKETING_VERSION: 0.6.1
         PRODUCT_BUNDLE_IDENTIFIER: com.aurorahe27.eva
         PRODUCT_NAME: EVA
         ENABLE_USER_SCRIPT_SANDBOXING: NO

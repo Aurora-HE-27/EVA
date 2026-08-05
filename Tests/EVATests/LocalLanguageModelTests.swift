@@ -11,7 +11,7 @@ final class LocalLanguageModelTests: XCTestCase {
         var response = ""
 
         let stream = try await model.streamResponse(
-            to: "我今天有点累，又不太想跟别人说。",
+            to: "你好，请自然地和我打个招呼。",
             systemPrompt: AppState.systemPrompt
         )
         for try await token in stream {
@@ -25,7 +25,7 @@ final class LocalLanguageModelTests: XCTestCase {
         XCTAssertGreaterThan(response.trimmingCharacters(in: .whitespacesAndNewlines).count, 4)
         var parser = EmotionStreamParser()
         let visibleResponse = parser.append(response) + (parser.flush() ?? "")
-        XCTAssertNotNil(parser.directive)
+        XCTAssertNil(parser.directive)
         XCTAssertFalse(visibleResponse.contains("[[EVA"))
         XCTAssertGreaterThan(visibleResponse.trimmingCharacters(in: .whitespacesAndNewlines).count, 4)
         print("EVA_BENCHMARK first_token=\(startedAt.duration(to: firstTokenAt ?? clock.now))")

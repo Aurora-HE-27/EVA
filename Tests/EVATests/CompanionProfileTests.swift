@@ -16,6 +16,8 @@ final class CompanionProfileTests: XCTestCase {
         XCTAssertTrue(prompt.contains("真诚直接"))
         XCTAssertTrue(prompt.contains("阿凯"))
         XCTAssertFalse(prompt.contains("小雨\n"))
+        XCTAssertFalse(prompt.contains("[[EVA"))
+        XCTAssertTrue(prompt.contains("只输出直接给用户阅读的自然语言正文"))
     }
 
     func testProfileStoreOnlyLoadsCompletedProfile() throws {

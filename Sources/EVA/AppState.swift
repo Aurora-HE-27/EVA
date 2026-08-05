@@ -40,10 +40,7 @@ final class AppState: ObservableObject {
     不要用 Markdown 标题，不要每句都称呼用户，不要假装拥有真人的身体或现实经历。
     当用户情绪低落时，先准确理解和倾听，再提供一个小而可行的支持；不说教，不空洞鸡汤。
     不得鼓励用户依赖 EVA、疑心或疏远真实人际关系。当用户表达自伤、自杀或即时危险时，温和但明确地鼓励其立即联系身边可信任的人、当地紧急服务或专业危机支持，并询问当下是否安全。
-    每次回复必须先输出一行不可省略的情绪控制指令，然后换行输出给用户看的正文。
-    指令格式严格为：[[EVA emotion=warm valence=0.3 arousal=0.2 intensity=0.5]]
-    emotion 只能是 neutral、warm、happy、concerned、sad、surprised、focused 之一；valence 范围 -1 到 1，arousal 和 intensity 范围 0 到 1。
-    指令只描述 EVA 此刻应该呈现的情绪，不要复述或解释指令。
+    只输出直接给用户阅读的自然语言正文。不要输出情绪标签、控制指令、思考过程或其他元数据。
     """
     }
 
@@ -139,6 +136,7 @@ final class AppState: ObservableObject {
         messages.append(ChatMessage(id: assistantID, role: .assistant, content: ""))
         isGenerating = true
         avatarState = .thinking
+        avatarEmotion = inferredEmotion(fromUserText: text)
         errorMessage = nil
 
         let voice = selectedVoiceIdentifier.isEmpty ? nil : selectedVoiceIdentifier
@@ -204,7 +202,15 @@ final class AppState: ObservableObject {
                     )
                 }
                 if !receivedContent {
-                    throw AppError.emptyResponse
+                    let fallback = fallbackResponse(for: text)
+                    append(fallback, to: assistantID)
+                    speechOutput.enqueue(
+                        fallback,
+                        voiceIdentifier: voice,
+                        rate: rate,
+                        pitch: pitch,
+                        emotion: avatarEmotion
+                    )
                 }
 
                 isGenerating = false
@@ -382,6 +388,36 @@ final class AppState: ObservableObject {
             return EmotionDirective(emotion: .concerned, valence: -0.18, arousal: 0.3, intensity: 0.62)
         }
         return EmotionDirective(emotion: .warm, valence: 0.25, arousal: 0.2, intensity: 0.35)
+    }
+
+    private func inferredEmotion(fromUserText text: String) -> EmotionDirective {
+        let concernedWords = ["难过", "不开心", "焦虑", "害怕", "压力", "累", "痛苦", "孤独", "失眠"]
+        if concernedWords.contains(where: text.contains) {
+            return EmotionDirective(
+                emotion: .concerned,
+                valence: -0.22,
+                arousal: 0.28,
+                intensity: 0.58
+            )
+        }
+        let happyWords = ["开心", "高兴", "成功", "太好了", "哈哈", "兴奋"]
+        if happyWords.contains(where: text.contains) {
+            return EmotionDirective(
+                emotion: .happy,
+                valence: 0.72,
+                arousal: 0.56,
+                intensity: 0.68
+            )
+        }
+        return EmotionDirective(emotion: .warm, valence: 0.28, arousal: 0.2, intensity: 0.4)
+    }
+
+    private func fallbackResponse(for text: String) -> String {
+        let concernedWords = ["难过", "不开心", "焦虑", "害怕", "压力", "累", "痛苦", "孤独", "失眠"]
+        if concernedWords.contains(where: text.contains) {
+            return "我在听。你不用急着把一切说清楚，可以先告诉我，此刻最让你难受的是什么。"
+        }
+        return "我在。慢慢说就好，你现在最想和我聊什么？"
     }
 
     private func scheduleIdleState() {

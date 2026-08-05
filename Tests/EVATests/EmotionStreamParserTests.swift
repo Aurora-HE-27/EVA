@@ -27,7 +27,16 @@ final class EmotionStreamParserTests: XCTestCase {
     func testFlushPreservesShortReplyWithoutNewline() {
         var parser = EmotionStreamParser()
 
-        XCTAssertEqual(parser.append("你好呀"), "")
-        XCTAssertEqual(parser.flush(), "你好呀")
+        XCTAssertEqual(parser.append("你"), "你")
+        XCTAssertEqual(parser.append("好呀"), "好呀")
+        XCTAssertNil(parser.flush())
+    }
+
+    func testBuffersOnlyPossibleDirectivePrefix() {
+        var parser = EmotionStreamParser()
+
+        XCTAssertEqual(parser.append("[["), "")
+        XCTAssertEqual(parser.append("不是控制标签"), "[[不是控制标签")
+        XCTAssertEqual(parser.append("，继续显示"), "，继续显示")
     }
 }
