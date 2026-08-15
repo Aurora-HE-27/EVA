@@ -1,6 +1,7 @@
 import Foundation
 
 struct EmotionStreamParser {
+    private static let directivePrefix = "[[EVA "
     private(set) var directive: EmotionDirective?
     private var prefixBuffer = ""
     private var resolvedPrefix = false
@@ -8,6 +9,18 @@ struct EmotionStreamParser {
     mutating func append(_ fragment: String) -> String {
         guard !resolvedPrefix else { return fragment }
         prefixBuffer += fragment
+
+        if !prefixBuffer.hasPrefix(Self.directivePrefix) {
+            // Keep buffering only while the fragment can still become the
+            // optional legacy directive prefix. Ordinary text streams at once.
+            if Self.directivePrefix.hasPrefix(prefixBuffer) {
+                return ""
+            }
+            resolvedPrefix = true
+            let visible = prefixBuffer
+            prefixBuffer = ""
+            return visible
+        }
 
         if let newline = prefixBuffer.firstIndex(of: "\n") {
             let firstLine = String(prefixBuffer[..<newline])

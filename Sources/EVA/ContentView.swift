@@ -5,25 +5,13 @@ struct ContentView: View {
     @State private var showsClearConfirmation = false
 
     var body: some View {
-        HSplitView {
-            AvatarStageView(
-                state: appState.avatarState,
-                emotion: appState.avatarEmotion,
-                isSpeaking: appState.speechOutput.isSpeaking,
-                imagePath: appState.avatarImagePath
-            )
-            .frame(minWidth: 360, idealWidth: 440)
-            .padding(18)
-
-            VStack(spacing: 0) {
-                header
-                Divider().opacity(0.45)
-                conversation
-                composer
-            }
-            .frame(minWidth: 500)
-            .background(Color(nsColor: .windowBackgroundColor))
+        VStack(spacing: 0) {
+            header
+            Divider().opacity(0.45)
+            conversation
+            composer
         }
+        .frame(minWidth: 520, idealWidth: 760, minHeight: 620)
         .background(Color(nsColor: .windowBackgroundColor))
         .sheet(isPresented: $appState.showsSettings) {
             SettingsView()
@@ -42,16 +30,33 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [.indigo, emotionAccent],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                Image(systemName: appState.speechOutput.isSpeaking ? "waveform" : "sparkles")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .symbolEffect(.variableColor.iterative, isActive: appState.speechOutput.isSpeaking)
+            }
+            .frame(width: 40, height: 40)
+
             VStack(alignment: .leading, spacing: 3) {
-                Text("EVA")
+                Text(appState.profile.sanitizedName)
                     .font(.system(size: 19, weight: .semibold, design: .rounded))
                 HStack(spacing: 6) {
                     Circle()
                         .fill(appState.isChatBackendReady ? Color.green : Color.orange)
                         .frame(width: 7, height: 7)
-                    Text(appState.connectionStatus)
+                    Text("\(appState.avatarState.statusText) · \(appState.connectionStatus)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
 
@@ -86,33 +91,112 @@ struct ContentView: View {
         .padding(.vertical, 15)
     }
 
-    private var conversation: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 14) {
-                    ForEach(appState.messages) { message in
-                        MessageBubble(message: message)
-                            .id(message.id)
-                    }
+    private var emotionAccent: Color {
+        switch appState.avatarEmotion.emotion {
+        case .neutral: .cyan
+        case .warm: .pink
+        case .happy: .yellow
+        case .concerned: .orange
+        case .sad: .blue
+        case .surprised: .mint
+        case .focused: .purple
+        }
+    }
 
-                    if let error = appState.errorMessage {
-                        Label(error, systemImage: "exclamationmark.triangle.fill")
-                            .font(.callout)
-                            .foregroundStyle(.orange)
-                            .padding(12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+    private var conversation: some View {
+        VStack(spacing: 22) {
+            Spacer(minLength: 24)
+
+            ZStack {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [emotionAccent.opacity(0.52), .indigo.opacity(0.18), .clear],
+                            center: .center,
+                            startRadius: 12,
+                            endRadius: 112
+                        )
+                    )
+                    .frame(width: 230, height: 230)
+                    .scaleEffect(appState.speechOutput.isSpeaking ? 1.08 : 0.94)
+                    .animation(
+                        .easeInOut(duration: 0.85).repeatForever(autoreverses: true),
+                        value: appState.speechOutput.isSpeaking
+                    )
+
+                Circle()
+                    .fill(.ultraThinMaterial)
+                    .overlay {
+                        Image(systemName: voiceStageSymbol)
+                            .font(.system(size: 43, weight: .medium))
+                            .foregroundStyle(emotionAccent)
+                            .symbolEffect(
+                                .variableColor.iterative,
+                                isActive: appState.isGenerating
+                                    || appState.speechOutput.isSpeaking
+                                    || appState.speechInput.isListening
+                            )
                     }
-                }
-                .padding(22)
+                    .frame(width: 132, height: 132)
+                    .shadow(color: emotionAccent.opacity(0.24), radius: 24)
             }
-            .onChange(of: appState.messages) { _, messages in
-                guard let last = messages.last else { return }
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(last.id, anchor: .bottom)
+
+            VStack(spacing: 6) {
+                Text(appState.avatarState.statusText)
+                    .font(.title3.weight(.semibold))
+                Text(voiceStageSubtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 12)
+
+            if let lastUserMessage = appState.messages.last(where: { $0.role == .user }) {
+                HStack {
+                    Spacer(minLength: 72)
+                    MessageBubble(message: lastUserMessage)
                 }
+                .padding(.horizontal, 22)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            if let error = appState.errorMessage {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 22)
             }
         }
+        .animation(.easeOut(duration: 0.2), value: appState.messages)
+    }
+
+    private var voiceStageSymbol: String {
+        if appState.speechInput.isListening {
+            return "ear"
+        }
+        if appState.speechOutput.isSpeaking {
+            return "waveform"
+        }
+        if appState.isGenerating {
+            return "ellipsis.bubble"
+        }
+        return "sparkles"
+    }
+
+    private var voiceStageSubtitle: String {
+        if appState.speechInput.isListening {
+            return "你可以自然地说，完成后再按一次麦克风"
+        }
+        if appState.speechOutput.isSpeaking {
+            return "正在用语音回应 · 点击麦克风可以打断"
+        }
+        if appState.isGenerating {
+            return "正在组织一段自然的语音回应"
+        }
+        return "回复默认只以语音播放"
     }
 
     private var composer: some View {
@@ -141,7 +225,11 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(appState.speechInput.isListening ? .red : .indigo)
-                .help(appState.speechInput.isListening ? "停止并发送" : "开始说话")
+                .help(
+                    appState.speechInput.isListening
+                        ? "停止并发送"
+                        : (appState.speechOutput.isSpeaking ? "打断并开始说话" : "开始说话")
+                )
 
                 TextField("说点什么…", text: $appState.draft, axis: .vertical)
                     .textFieldStyle(.plain)
@@ -181,39 +269,13 @@ private struct MessageBubble: View {
     let message: ChatMessage
 
     var body: some View {
-        HStack {
-            if message.role == .user {
-                Spacer(minLength: 72)
-            }
-
-            VStack(alignment: .leading, spacing: 5) {
-                if message.content.isEmpty {
-                    HStack(spacing: 5) {
-                        ForEach(0..<3, id: \.self) { _ in
-                            Circle()
-                                .fill(.secondary)
-                                .frame(width: 6, height: 6)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                } else {
-                    Text(message.content)
-                        .textSelection(.enabled)
-                        .lineSpacing(3)
-                        .foregroundStyle(message.role == .user ? Color.white : Color.primary)
-                }
-            }
+        Text(message.content)
+            .textSelection(.enabled)
+            .lineSpacing(3)
+            .foregroundStyle(.white)
             .padding(.horizontal, 14)
             .padding(.vertical, 11)
-            .background(bubbleColor, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-            if message.role != .user {
-                Spacer(minLength: 72)
-            }
-        }
-    }
-
-    private var bubbleColor: Color {
-        message.role == .user ? .indigo.opacity(0.88) : Color(nsColor: .controlBackgroundColor)
+            .background(.indigo.opacity(0.88), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .accessibilityLabel("你说：\(message.content)")
     }
 }

@@ -13,15 +13,9 @@ actor ConversationStore {
             at: directory,
             withIntermediateDirectories: true
         )
-        fileURL = directory.appending(path: "conversation.json")
-
-        let legacyURL = support.appending(
-            path: "VirtualCompanion/conversation.json"
-        )
-        if !FileManager.default.fileExists(atPath: fileURL.path),
-           FileManager.default.fileExists(atPath: legacyURL.path) {
-            try? FileManager.default.copyItem(at: legacyURL, to: fileURL)
-        }
+        // v2 intentionally starts clean. Earlier development builds contained
+        // API/Ollama smoke-test messages that must never appear for new users.
+        fileURL = directory.appending(path: "conversation-v2.json")
     }
 
     func load() -> [ChatMessage] {

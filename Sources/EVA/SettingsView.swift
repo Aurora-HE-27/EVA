@@ -13,60 +13,52 @@ struct SettingsView: View {
                 .font(.system(size: 24, weight: .bold, design: .rounded))
 
             Form {
-                Picker("文字模型来源", selection: $appState.chatBackend) {
-                    ForEach(ChatBackendKind.allCases) { backend in
-                        Text(backend.displayName).tag(backend)
+                LabeledContent("当前伴侣") {
+                    Text("\(appState.profile.sanitizedName) · \(appState.profile.gender.displayName) · \(appState.profile.personality.displayName)")
+                }
+
+                LabeledContent("对话核心") {
+                    HStack(spacing: 7) {
+                        Circle()
+                            .fill(appState.isLocalModelReady ? Color.green : Color.orange)
+                            .frame(width: 7, height: 7)
+                        Text("Qwen3.5 2B · 4-bit · MLX")
                     }
                 }
-                .pickerStyle(.segmented)
 
-                if appState.chatBackend == .ollama {
-                    TextField("Ollama 地址", text: $appState.serverAddress)
-                        .textFieldStyle(.roundedBorder)
-
-                    Picker("对话模型", selection: $appState.selectedModel) {
-                        if appState.models.isEmpty {
-                            Text("没有检测到模型").tag("")
-                        }
-                        ForEach(appState.models) { model in
-                            Text(model.name).tag(model.name)
-                        }
-                    }
-                } else {
-                    TextField("API 根地址或完整端点", text: $appState.apiEndpointAddress)
-                        .textFieldStyle(.roundedBorder)
-                    TextField("API 模型名称", text: $appState.apiModelName)
-                        .textFieldStyle(.roundedBorder)
-                    SecureField("API 密钥", text: $appState.apiKey)
-                        .textFieldStyle(.roundedBorder)
+                LabeledContent("隐私模式") {
+                    Label("完全本地，无网络权限", systemImage: "lock.shield.fill")
+                        .foregroundStyle(.green)
                 }
 
                 Picker("中文声音", selection: $appState.selectedVoiceIdentifier) {
-                    Text("EVA · 原创声线（Qwen3-TTS）")
-                        .tag(SpeechOutputService.evaVoiceIdentifier)
+                    Section("EVA 神经声线（推荐）") {
+                        ForEach(
+                            SpeechOutputService.neuralVoiceOptions,
+                            id: \.identifier
+                        ) { option in
+                            Text(option.label).tag(option.identifier)
+                        }
+                    }
+                    Section("macOS 系统声线（备用）") {
                     Text("系统默认").tag("")
-                    ForEach(
-                        SpeechOutputService.availableVoices.filter {
-                            $0.identifier != SpeechOutputService.evaVoiceIdentifier
-                        },
-                        id: \.identifier
-                    ) { voice in
-                        Text(voiceLabel(voice))
-                            .tag(voice.identifier)
+                    ForEach(SpeechOutputService.availableVoices, id: \.identifier) { voice in
+                        Text(voiceLabel(voice)).tag(voice.identifier)
+                    }
                     }
                 }
 
                 HStack {
                     Text("AI 模型目录")
                     Spacer()
-                    Text("~/AI开发/ai模型")
+                    Text("EVA.app 内置模型")
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundStyle(.secondary)
-                        .help(ModelStorage.rootURL.path)
+                        .help(ModelStorage.huggingFaceURL.path)
                     Button("显示") {
                         NSWorkspace.shared.activateFileViewerSelecting([
-                            ModelStorage.rootURL
+                            ModelStorage.huggingFaceURL
                         ])
                     }
                 }
@@ -80,42 +72,31 @@ struct SettingsView: View {
                         .frame(width: 34)
                 }
 
-                HStack {
-                    Text("音高")
-                    Slider(value: $appState.voicePitch, in: 0.85...1.18, step: 0.01)
-                    Text(appState.voicePitch.formatted(.number.precision(.fractionLength(2))))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                        .frame(width: 34)
-                }
-
-                HStack {
-                    Text("真人形象")
-                    Spacer()
-                    Text(appState.avatarDisplayName)
-                        .foregroundStyle(.secondary)
-                    Button("使用默认") {
-                        appState.useBundledAvatar()
+                if SpeechOutputService.isNeuralVoiceIdentifier(appState.selectedVoiceIdentifier) {
+                    LabeledContent("情绪韵律") {
+                        Text("自动 · 本地神经语音")
+                            .foregroundStyle(.secondary)
                     }
-                    .disabled(appState.avatarDisplayName == "EVA 原创形象")
-                    Button("选择图片…") {
-                        appState.chooseAvatarImage()
+                } else {
+                    HStack {
+                        Text("音高")
+                        Slider(value: $appState.voicePitch, in: 0.92...1.08, step: 0.01)
+                        Text(appState.voicePitch.formatted(.number.precision(.fractionLength(2))))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .frame(width: 34)
                     }
                 }
             }
             .formStyle(.grouped)
 
-            Text(settingsDisclosure)
+            Text("EVA 默认只用连续语音回答，隐藏文字仅保存在本机用于上下文和记忆。语音播放前会自动过滤 Emoji 和动作标签；EVA 不包含 API 密钥，也不会将对话发送到网络。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
             Spacer()
 
             HStack {
-                Button(appState.chatBackend == .ollama ? "重新检测模型" : "检查配置") {
-                    Task { await appState.refreshModels() }
-                }
-
                 Button("试听声音") {
                     appState.previewVoice()
                 }
@@ -142,13 +123,6 @@ struct SettingsView: View {
         .onAppear {
             openingSnapshot = appState.settingsSnapshot()
         }
-    }
-
-    private var settingsDisclosure: String {
-        if appState.chatBackend == .compatibleAPI {
-            return "可填写服务商根地址或完整 Chat Completions 端点，EVA 会自动补全常见路径。API 模式会发送对话正文；密钥只保存在 macOS 钥匙串。"
-        }
-        return "Ollama 对话、默认形象和 Qwen3-TTS 声音均在本机运行。原创声线不可用时会自动回退到 Mac 中文语音。"
     }
 
     private func voiceLabel(_ voice: AVSpeechSynthesisVoice) -> String {

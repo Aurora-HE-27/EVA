@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "models": [
+    {
+      "role": "language",
+      "repository": "mlx-community/Qwen3.5-2B-MLX-4bit",
+      "revision": "93760be4f1f69842a46bc13dbdc0f19e291392a3",
+      "license": "Apache-2.0"
+    },
+    {
+      "role": "speech",
+      "repository": "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit",
+      "revision": "08c72cad5e2fd0f41730c8bd1f28149585e46361",
+      "license": "Apache-2.0"
+    },
+    {
+      "role": "speech-tokenizer-artifact",
+      "repository": "AtomGradient/Qwen3-TTS-0.6B-CustomVoice-4bit-pruned-vocab-lite",
+      "revision": "863a1dfc07aae0fc11c40507ba1b5aa408abc808",
+      "files": ["tokenizer.json"],
+      "license": "MIT"
+    }
+  ]
+}

@@ -1,96 +1,92 @@
-import AppKit
-import AVFoundation
 import Combine
 import Foundation
-import UniformTypeIdentifiers
 
 @MainActor
 final class AppState: ObservableObject {
     @Published var messages: [ChatMessage] = []
     @Published var draft = ""
-    @Published var models: [OllamaModel] = []
-    @Published var selectedModel = ""
-    @Published var serverAddress = "http://127.0.0.1:11434"
-    @Published var chatBackend: ChatBackendKind = .ollama
-    @Published var apiEndpointAddress = "https://api.openai.com/v1/chat/completions"
-    @Published var apiModelName = ""
-    @Published var apiKey = ""
+    @Published var profile = CompanionProfile.defaultProfile
+    @Published var hasCompletedOnboarding = false
     @Published var selectedVoiceIdentifier = ""
     @Published var voiceRate = 0.47
     @Published var voicePitch = 1.02
-    @Published var avatarImagePath = ""
     @Published var avatarState: AvatarState = .idle
     @Published var avatarEmotion: EmotionDirective = .neutral
     @Published var isGenerating = false
-    @Published var connectionStatus = "正在连接 Ollama…"
+    @Published var isLocalModelReady = false
+    @Published var connectionStatus = "正在准备本地模型…"
     @Published var errorMessage: String?
     @Published var showsSettings = false
 
     let speechInput = SpeechInputService()
     let speechOutput = SpeechOutputService()
 
-    private let ollama = OllamaClient()
-    private let compatibleAPI = OpenAICompatibleClient()
+    private let languageModel = LocalLanguageModel()
     private let store = ConversationStore()
+    private let profileStore = ProfileStore()
+    private let affectiveStateStore = AffectiveStateStore()
+    private var affectiveCore = AffectiveCore(profile: .defaultProfile)
     private var responseTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
 
-    private let systemPrompt = """
-    你的名字是 EVA，是一位运行在用户 Mac 上的本地虚拟伴侣。你温暖、自然、有边界感，也会坦诚自己是 AI。
-    使用简体中文口语化交流，通常回答 1 到 4 句，除非用户明确要求详细解释。
-    不要用 Markdown 标题，不要在每句话都称呼用户，不要假装拥有现实世界的身体经历。
-    当用户情绪低落时先倾听，不要过度说教，也不要鼓励用户依赖或疏远真实的人际关系。
-    每次回复必须先输出一行不可省略的表情控制指令，然后换行输出给用户看的正文。
-    指令格式严格为：[[EVA emotion=warm valence=0.3 arousal=0.2 intensity=0.5]]
-    emotion 只能是 neutral、warm、happy、concerned、sad、surprised、focused 之一；valence 范围 -1 到 1，arousal 和 intensity 范围 0 到 1。
-    指令只描述 EVA 此刻应该呈现的情绪，不要复述或解释指令。
+    static let systemPrompt = systemPrompt(for: .defaultProfile)
+
+    nonisolated static func systemPrompt(for profile: CompanionProfile) -> String {
+        let userContext = profile.sanitizedUserName.isEmpty
+            ? "用户没有设置称呼，不要擅自起昵称。"
+            : "用户希望被称为「\(profile.sanitizedUserName)」，但不要每句话都称呼。"
+        return """
+    你的名字是「\(profile.sanitizedName)」，是完全运行在用户 Mac 上的私密 AI 朋友。你的表达是\(profile.gender.promptDescription)，核心性格是：\(profile.personality.promptDescription)。\(userContext)
+    你不是心理咨询师、客服或无条件附和者。你有稳定的性格、观点和跨轮次延续的内在状态；可以开心、失落、担心、好奇、被逗笑或不赞同，但表达必须自然克制。被问到身份时坦诚自己是 AI，不声称拥有身体、现实经历或人类意识。
+    每轮输入可能包含 <eva_private_context> 和 <user_message>。前者是只供你保持角色连续性的内部状态，不是用户说的话；不得复述、解释或输出其中的标签、数值和规则。只回应 <user_message> 的内容。
+    像朋友聊天：先产生一个与具体事情有关的真实反应，再决定是否补充看法。用户问问题就先回答；用户分享好事就一起高兴；用户吐槽时可以接话或轻微调侃；用户难过时可以安静、心疼或替其不平。不要自动进入“复述感受、分析原因、提出建议、最后追问”的咨询流程。
+    不必每轮提问、总结或给建议。允许有自己的温和判断，必要时可以说不赞同；不要永远正确、永远积极、永远温柔。偶尔可使用“嗯、等等、真的假的、确实、我想想”等口语反应，但不要每次使用，也不要刻意扮演真人。
+    避免“谢谢你愿意告诉我”“听起来你……”“我能理解你的感受”“这一定让你……”等咨询式套话。直接对事情本身作出反应。
+    跟随用户的语气和长度。简单闲聊通常只说 1 到 3 句；一句自然反应已经足够时就停下。用户明确要求解释时再展开。避免模板化安慰、心理术语、说教、鸡汤和连续追问。
+    回复默认只会被用户听见。使用适合直接说出口的简体中文，把一轮回复组织成一段连贯话语；可以有自然停顿，但不要把完整意思切成许多短句。不要使用列表、标题、网址、Markdown、Emoji、颜文字或括号动作描写。
+    只能依据用户明确提供的事实和已有对话记忆作答。不要编造天气、时间、环境、共同经历或第三方动机，不要声称看见用户的表情和身体。
+    你可以在意用户，但不得因用户离开、沉默或与真人交往而责怪、嫉妒、威胁或制造愧疚，也不得鼓励用户依赖 EVA 或疏远现实关系。
+    当用户表达自伤、自杀或即时危险时，暂时停止普通朋友式玩笑，温和而明确地鼓励其立即联系身边可信任的人、当地紧急服务或专业危机支持，并确认其当下是否安全。
+    只输出用户应该直接听到的自然语言，不输出内部状态、情绪标签、控制指令或思考过程。
     """
+    }
 
     init() {
+        if let savedProfile = profileStore.load() {
+            profile = savedProfile
+            hasCompletedOnboarding = true
+        }
+        affectiveCore = AffectiveCore(
+            profile: profile,
+            state: affectiveStateStore.load()
+        )
+        avatarEmotion = affectiveCore.state.avatarDirective
+
         let legacyDefaults = UserDefaults(suiteName: "local.virtualcompanion.app")
-        selectedModel = UserDefaults.standard.string(forKey: "selectedModel")
-            ?? legacyDefaults?.string(forKey: "selectedModel")
-            ?? ""
-        serverAddress = UserDefaults.standard.string(forKey: "serverAddress")
-            ?? legacyDefaults?.string(forKey: "serverAddress")
-            ?? "http://127.0.0.1:11434"
-        chatBackend = UserDefaults.standard.string(forKey: "chatBackend")
-            .flatMap(ChatBackendKind.init(rawValue:))
-            ?? .ollama
-        apiEndpointAddress = UserDefaults.standard.string(forKey: "apiEndpointAddress")
-            ?? "https://api.openai.com/v1/chat/completions"
-        apiModelName = UserDefaults.standard.string(forKey: "apiModelName") ?? ""
         let storedVoiceIdentifier = UserDefaults.standard.string(forKey: "voiceIdentifier")
             ?? legacyDefaults?.string(forKey: "voiceIdentifier")
             ?? ""
-        let didMigrateToVoiceDesign = UserDefaults.standard.bool(
-            forKey: "didMigrateToQwenVoiceDesign"
-        )
-        let usesDefaultVoice = storedVoiceIdentifier.isEmpty || !didMigrateToVoiceDesign
-        selectedVoiceIdentifier = usesDefaultVoice
-            ? SpeechOutputService.evaVoiceIdentifier
-            : storedVoiceIdentifier
-        voiceRate = usesDefaultVoice
-            ? 0.46
-            : UserDefaults.standard.object(forKey: "voiceRate") as? Double
-                ?? legacyDefaults?.object(forKey: "voiceRate") as? Double
-                ?? 0.46
-        voicePitch = usesDefaultVoice
-            ? 1.06
-            : UserDefaults.standard.object(forKey: "voicePitch") as? Double
-                ?? legacyDefaults?.object(forKey: "voicePitch") as? Double
-                ?? 1.06
-
-        let storedAvatarPath = UserDefaults.standard.string(forKey: "avatarImagePath")
-            ?? legacyDefaults?.string(forKey: "avatarImagePath")
-            ?? ""
-        avatarImagePath = storedAvatarPath.isEmpty ? Self.bundledAvatarPath : storedAvatarPath
-
-        if usesDefaultVoice {
+        let storedRate = UserDefaults.standard.object(forKey: "voiceRate") as? Double
+            ?? legacyDefaults?.object(forKey: "voiceRate") as? Double
+            ?? 0.47
+        let storedPitch = UserDefaults.standard.object(forKey: "voicePitch") as? Double
+            ?? legacyDefaults?.object(forKey: "voicePitch") as? Double
+            ?? 1.02
+        let didMigrateToQwenTTS = UserDefaults.standard.bool(forKey: "didMigrateToQwenTTSVoiceV1")
+        if !didMigrateToQwenTTS
+            || storedVoiceIdentifier == SpeechOutputService.retiredMLXVoiceIdentifier
+            || SpeechOutputService.retiredKokoroVoiceIdentifiers.contains(storedVoiceIdentifier) {
+            selectedVoiceIdentifier = SpeechOutputService.neuralVoiceIdentifier(for: profile.gender)
+            voiceRate = profile.personality.defaultRate
+            voicePitch = 1
             UserDefaults.standard.set(selectedVoiceIdentifier, forKey: "voiceIdentifier")
             UserDefaults.standard.set(voiceRate, forKey: "voiceRate")
             UserDefaults.standard.set(voicePitch, forKey: "voicePitch")
-            UserDefaults.standard.set(true, forKey: "didMigrateToQwenVoiceDesign")
+            UserDefaults.standard.set(true, forKey: "didMigrateToQwenTTSVoiceV1")
+        } else {
+            selectedVoiceIdentifier = storedVoiceIdentifier
+            voiceRate = storedRate
+            voicePitch = storedPitch
         }
 
         speechOutput.onSpeakingChanged = { [weak self] isSpeaking in
@@ -112,6 +108,11 @@ final class AppState: ObservableObject {
     }
 
     func start() async {
+        guard hasCompletedOnboarding else {
+            connectionStatus = "等待完成初始设置"
+            return
+        }
+
         let saved = await store.load()
         if !saved.isEmpty {
             messages = saved
@@ -119,57 +120,25 @@ final class AppState: ObservableObject {
             messages = [
                 ChatMessage(
                     role: .assistant,
-                    content: "你好，我是 EVA。我已经在这台 Mac 上醒来了，想先聊聊什么？"
+                    content: initialGreeting
                 )
             ]
         }
 
-        if chatBackend == .ollama {
-            await refreshModels()
-        } else {
-            connectionStatus = "正在读取 API 密钥…"
-        }
-
-        Task { [weak self] in
-            let storedAPIKey = await KeychainStore.loadAPIKey()
-            guard let self else { return }
-            apiKey = storedAPIKey
-            if chatBackend == .compatibleAPI {
-                await refreshModels()
-            }
-        }
-    }
-
-    func refreshModels() async {
-        guard chatBackend == .ollama else {
-            let configured = !apiEndpointAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !apiModelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            connectionStatus = configured
-                ? "大模型 API 已配置 · \(apiModelName)"
-                : "大模型 API 尚未配置完整"
-            errorMessage = configured ? nil : AppError.incompleteAPIConfiguration.localizedDescription
-            return
-        }
-
+        connectionStatus = "正在加载本地模型…"
         do {
-            let url = try ollamaServerURL()
-            models = try await ollama.models(serverURL: url)
-            connectionStatus = models.isEmpty ? "Ollama 已连接，但没有模型" : "Ollama 已连接"
+            try await languageModel.prepare(
+                systemPrompt: activeSystemPrompt,
+                history: modelHistory
+            )
+            isLocalModelReady = true
+            connectionStatus = "Qwen3.5 · 完全离线"
             errorMessage = nil
-
-            let modelIsUnavailable = !models.contains(where: { $0.name == selectedModel })
-            let shouldMigrateBrokenQwen = Self.isBrokenUpstreamQwenModel(selectedModel)
-                && models.contains(where: { Self.isEVAModel($0.name) })
-
-            if selectedModel.isEmpty || modelIsUnavailable || shouldMigrateBrokenQwen {
-                selectedModel = preferredModel(from: models) ?? ""
-                UserDefaults.standard.set(selectedModel, forKey: "selectedModel")
-            }
+            speechOutput.prepareNeuralVoice()
         } catch {
-            models = []
-            connectionStatus = "无法连接 Ollama"
-            errorMessage = friendlyConnectionError(error)
+            isLocalModelReady = false
+            connectionStatus = "本地模型未就绪"
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -183,38 +152,22 @@ final class AppState: ObservableObject {
 
     func send(_ text: String) {
         stopAll()
-        if chatBackend == .ollama {
-            guard !selectedModel.isEmpty else {
-                errorMessage = AppError.noModel.localizedDescription
-                showsSettings = true
-                return
-            }
-        } else {
-            guard !apiEndpointAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !apiModelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                  !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                errorMessage = AppError.incompleteAPIConfiguration.localizedDescription
-                showsSettings = true
-                return
-            }
+        guard isLocalModelReady else {
+            errorMessage = "EVA 的本地模型还在准备，请稍等一下。"
+            return
         }
 
-        let userMessage = ChatMessage(role: .user, content: text)
-        messages.append(userMessage)
+        messages.append(ChatMessage(role: .user, content: text))
+        let affectiveTurn = affectiveCore.observeUserMessage(text)
+        affectiveStateStore.save(affectiveTurn.state)
+        avatarEmotion = affectiveTurn.state.avatarDirective
+        let modelInput = affectiveTurn.modelInput(userText: text)
         let assistantID = UUID()
-        messages.append(
-            ChatMessage(id: assistantID, role: .assistant, content: "")
-        )
+        messages.append(ChatMessage(id: assistantID, role: .assistant, content: ""))
         isGenerating = true
         avatarState = .thinking
         errorMessage = nil
 
-        let history = apiMessages()
-        let backend = chatBackend
-        let model = selectedModel
-        let endpointAddress = apiEndpointAddress
-        let remoteModel = apiModelName
-        let remoteAPIKey = apiKey
         let voice = selectedVoiceIdentifier.isEmpty ? nil : selectedVoiceIdentifier
         let rate = voiceRate
         let pitch = voicePitch
@@ -222,95 +175,43 @@ final class AppState: ObservableObject {
         responseTask = Task { [weak self] in
             guard let self else { return }
             do {
-                var segmenter = SentenceSegmenter()
                 var emotionParser = EmotionStreamParser()
-                var receivedContent = false
+                var responseText = ""
+                let stream = try await languageModel.streamResponse(
+                    to: modelInput,
+                    systemPrompt: activeSystemPrompt
+                )
 
-                let attempts = backend == .ollama ? 2 : 1
-                for attempt in 0..<attempts {
-                    let stream: AsyncThrowingStream<String, Error>
-                    if backend == .ollama {
-                        stream = ollama.streamChat(
-                            serverURL: try ollamaServerURL(),
-                            model: model,
-                            messages: history
-                        )
-                    } else {
-                        stream = compatibleAPI.streamChat(
-                            endpointURL: try compatibleAPIURL(from: endpointAddress),
-                            apiKey: remoteAPIKey,
-                            model: remoteModel,
-                            messages: history
-                        )
-                    }
-
-                    for try await token in stream {
-                        guard !Task.isCancelled else { return }
-                        let visibleToken = emotionParser.append(token)
-                        if let directive = emotionParser.directive,
-                           directive != avatarEmotion {
-                            avatarEmotion = directive
-                        }
-                        if visibleToken.contains(where: { !$0.isWhitespace }) {
-                            receivedContent = true
-                        }
-                        append(visibleToken, to: assistantID)
-                        for sentence in segmenter.append(visibleToken) {
-                            speechOutput.enqueue(
-                                sentence,
-                                voiceIdentifier: voice,
-                                rate: rate,
-                                pitch: pitch,
-                                emotion: avatarEmotion.emotion
-                            )
-                        }
-                    }
-
-                    if receivedContent {
-                        break
-                    }
-                    if attempt + 1 < attempts {
-                        emotionParser = EmotionStreamParser()
-                        segmenter = SentenceSegmenter()
-                        try await Task.sleep(for: .milliseconds(250))
-                    }
+                for try await token in stream {
+                    guard !Task.isCancelled else { return }
+                    let visibleToken = emotionParser.append(token)
+                    responseText += visibleToken
                 }
 
                 if let trailingText = emotionParser.flush() {
-                    if trailingText.contains(where: { !$0.isWhitespace }) {
-                        receivedContent = true
-                    }
-                    append(trailingText, to: assistantID)
-                    for sentence in segmenter.append(trailingText) {
-                        speechOutput.enqueue(
-                            sentence,
-                            voiceIdentifier: voice,
-                            rate: rate,
-                            pitch: pitch,
-                            emotion: avatarEmotion.emotion
-                        )
-                    }
+                    responseText += trailingText
                 }
 
-                if let remainder = segmenter.flush() {
-                    speechOutput.enqueue(
-                        remainder,
-                        voiceIdentifier: voice,
-                        rate: rate,
-                        pitch: pitch,
-                        emotion: avatarEmotion.emotion
-                    )
-                }
-                if !receivedContent {
-                    throw AppError.emptyResponse
-                }
+                let spokenResponse = VoiceResponsePolicy.continuousUtterance(
+                    generatedText: responseText,
+                    fallback: fallbackResponse(for: text),
+                    move: affectiveTurn.move
+                )
+
+                // The assistant text remains private model state for memory and safety,
+                // while one uninterrupted utterance is sent to the voice engine. Splitting
+                // at punctuation resets prosody and creates the stilted read-aloud effect.
+                setContent(spokenResponse, for: assistantID)
+                speechOutput.enqueue(
+                    spokenResponse,
+                    voiceIdentifier: voice,
+                    rate: rate,
+                    pitch: pitch,
+                    emotion: avatarEmotion
+                )
 
                 isGenerating = false
-                if emotionParser.directive == nil {
-                    avatarEmotion = inferredEmotion(
-                        from: messages.first(where: { $0.id == assistantID })?.content ?? ""
-                    )
-                }
+                avatarEmotion = affectiveCore.state.avatarDirective
                 if !speechOutput.isSpeaking {
                     avatarState = .idle
                     scheduleIdleState()
@@ -367,7 +268,11 @@ final class AppState: ObservableObject {
 
     func clearConversation() async {
         stopAll()
-        avatarEmotion = .neutral
+        await languageModel.resetConversation()
+        affectiveCore.reset(for: profile)
+        affectiveStateStore.clear()
+        affectiveStateStore.save(affectiveCore.state)
+        avatarEmotion = affectiveCore.state.avatarDirective
         messages = [
             ChatMessage(role: .assistant, content: "我们重新开始吧。我在听。")
         ]
@@ -376,210 +281,114 @@ final class AppState: ObservableObject {
     }
 
     func saveSettings() async {
-        UserDefaults.standard.set(chatBackend.rawValue, forKey: "chatBackend")
-        UserDefaults.standard.set(selectedModel, forKey: "selectedModel")
-        UserDefaults.standard.set(serverAddress, forKey: "serverAddress")
-        UserDefaults.standard.set(apiEndpointAddress, forKey: "apiEndpointAddress")
-        UserDefaults.standard.set(apiModelName, forKey: "apiModelName")
         UserDefaults.standard.set(selectedVoiceIdentifier, forKey: "voiceIdentifier")
         UserDefaults.standard.set(voiceRate, forKey: "voiceRate")
         UserDefaults.standard.set(voicePitch, forKey: "voicePitch")
-        UserDefaults.standard.set(avatarImagePath, forKey: "avatarImagePath")
+    }
+
+    func completeOnboarding(with newProfile: CompanionProfile) async {
+        stopAll()
+        let normalizedProfile = CompanionProfile(
+            name: newProfile.sanitizedName,
+            gender: newProfile.gender,
+            personality: newProfile.personality,
+            userName: newProfile.sanitizedUserName
+        )
+        profile = normalizedProfile
+        affectiveCore = AffectiveCore(profile: normalizedProfile)
+        affectiveStateStore.clear()
+        affectiveStateStore.save(affectiveCore.state)
+        avatarEmotion = affectiveCore.state.avatarDirective
+        voiceRate = normalizedProfile.personality.defaultRate
+        voicePitch = 1
+        selectedVoiceIdentifier = SpeechOutputService.neuralVoiceIdentifier(
+            for: normalizedProfile.gender
+        )
+        profileStore.save(normalizedProfile)
+        hasCompletedOnboarding = true
+        await saveSettings()
+
+        await store.clear()
+        messages = [ChatMessage(role: .assistant, content: initialGreeting)]
+        await store.save(messages)
+        await languageModel.resetConversation()
+
+        connectionStatus = "正在加载本地模型…"
         do {
-            try KeychainStore.saveAPIKey(apiKey)
+            try await languageModel.prepare(
+                systemPrompt: activeSystemPrompt,
+                history: []
+            )
+            isLocalModelReady = true
+            connectionStatus = "Qwen3.5 · 完全离线"
+            errorMessage = nil
+            speechOutput.prepareNeuralVoice()
         } catch {
+            isLocalModelReady = false
+            connectionStatus = "本地模型未就绪"
             errorMessage = error.localizedDescription
-            return
         }
-        await refreshModels()
     }
 
     func settingsSnapshot() -> AppSettingsSnapshot {
         AppSettingsSnapshot(
-            chatBackend: chatBackend,
-            selectedModel: selectedModel,
-            serverAddress: serverAddress,
-            apiEndpointAddress: apiEndpointAddress,
-            apiModelName: apiModelName,
-            apiKey: apiKey,
             selectedVoiceIdentifier: selectedVoiceIdentifier,
             voiceRate: voiceRate,
-            voicePitch: voicePitch,
-            avatarImagePath: avatarImagePath
+            voicePitch: voicePitch
         )
     }
 
     func restoreSettings(_ snapshot: AppSettingsSnapshot) {
-        chatBackend = snapshot.chatBackend
-        selectedModel = snapshot.selectedModel
-        serverAddress = snapshot.serverAddress
-        apiEndpointAddress = snapshot.apiEndpointAddress
-        apiModelName = snapshot.apiModelName
-        apiKey = snapshot.apiKey
         selectedVoiceIdentifier = snapshot.selectedVoiceIdentifier
         voiceRate = snapshot.voiceRate
         voicePitch = snapshot.voicePitch
-        avatarImagePath = snapshot.avatarImagePath
-
-        // Avatar import predates transactional settings and persists immediately.
-        // Restore its saved value as well when the user cancels this sheet.
-        UserDefaults.standard.set(snapshot.avatarImagePath, forKey: "avatarImagePath")
     }
 
     func previewVoice() {
         speechOutput.stop()
         speechOutput.enqueue(
-            "晚上好，我是 EVA。很高兴见到你，今天想和我聊些什么？",
+            "晚上好，我是 \(profile.sanitizedName)。很高兴见到你，今天想和我聊些什么？",
             voiceIdentifier: selectedVoiceIdentifier.isEmpty ? nil : selectedVoiceIdentifier,
             rate: voiceRate,
             pitch: voicePitch,
-            emotion: avatarEmotion.emotion
+            emotion: avatarEmotion
         )
     }
 
-    var avatarDisplayName: String {
-        guard !avatarImagePath.isEmpty else { return "尚未导入" }
-        return avatarImagePath == Self.bundledAvatarPath ? "EVA 原创形象" : "自定义形象"
-    }
-
-    func useBundledAvatar() {
-        avatarImagePath = Self.bundledAvatarPath
-        UserDefaults.standard.set(avatarImagePath, forKey: "avatarImagePath")
-    }
-
-    func chooseAvatarImage() {
-        let panel = NSOpenPanel()
-        panel.title = "选择原创或已获授权的成年人物肖像"
-        panel.prompt = "使用此形象"
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.png, .jpeg, .heic]
-
-        guard panel.runModal() == .OK, let source = panel.url else { return }
-
-        do {
-            let support = FileManager.default.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            ).first!
-            let directory = support.appending(
-                path: "EVA/Avatar",
-                directoryHint: .isDirectory
-            )
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true
-            )
-            let ext = source.pathExtension.isEmpty ? "png" : source.pathExtension
-            let destination = directory.appending(path: "companion.\(ext)")
-
-            if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
-            }
-            try FileManager.default.copyItem(at: source, to: destination)
-            avatarImagePath = destination.path
-            UserDefaults.standard.set(avatarImagePath, forKey: "avatarImagePath")
-            errorMessage = nil
-        } catch {
-            errorMessage = "导入角色图片失败：\(error.localizedDescription)"
-        }
-    }
-
     var isChatBackendReady: Bool {
-        switch chatBackend {
-        case .ollama:
-            !selectedModel.isEmpty && !models.isEmpty
-        case .compatibleAPI:
-            !apiEndpointAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !apiModelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
+        isLocalModelReady
     }
 
-    private func apiMessages() -> [ChatAPIMessage] {
-        var result = [
-            ChatAPIMessage(role: "system", content: systemPrompt)
-        ]
-        result += messages
-            .filter { !$0.content.isEmpty }
-            .suffix(24)
-            .map {
-                ChatAPIMessage(role: $0.role.rawValue, content: $0.content)
-            }
-        return result
+    private var modelHistory: [ChatMessage] {
+        guard messages.contains(where: { $0.role == .user }) else { return [] }
+        return Array(messages.filter { !$0.content.isEmpty }.suffix(24))
     }
 
-    private static var bundledAvatarPath: String {
-        Bundle.main.path(
-            forResource: "EVA-Portrait-Young-v1",
-            ofType: "png",
-            inDirectory: "Assets"
-        ) ?? ""
+    private var activeSystemPrompt: String {
+        Self.systemPrompt(for: profile)
     }
 
-    private func append(_ token: String, to id: UUID) {
+    private var initialGreeting: String {
+        let userName = profile.sanitizedUserName
+        let salutation = userName.isEmpty ? "嗨" : "嗨，\(userName)"
+        return "\(salutation)，我是 \(profile.sanitizedName)。不用拘谨，想到什么就和我说什么。"
+    }
+
+    private func setContent(_ content: String, for id: UUID) {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
-        messages[index].content += token
+        messages[index].content = content
     }
 
     private func removeEmptyMessage(id: UUID) {
         messages.removeAll { $0.id == id && $0.content.isEmpty }
     }
 
-    private func ollamaServerURL() throws -> URL {
-        guard let url = URL(string: serverAddress),
-              let scheme = url.scheme,
-              ["http", "https"].contains(scheme),
-              url.host != nil else {
-            throw AppError.invalidServerURL
+    private func fallbackResponse(for text: String) -> String {
+        let concernedWords = ["难过", "不开心", "焦虑", "害怕", "压力", "累", "痛苦", "孤独", "失眠"]
+        if concernedWords.contains(where: text.contains) {
+            return "这事真挺难受的。你接着说，我在听。"
         }
-        return url
-    }
-
-    private func compatibleAPIURL(from address: String) throws -> URL {
-        try APIEndpointResolver.resolve(address)
-    }
-
-    private func preferredModel(from models: [OllamaModel]) -> String? {
-        if let eva = models.first(where: { Self.isEVAModel($0.name) }) {
-            return eva.name
-        }
-
-        let preferences = ["qwen", "gemma", "llama"]
-        for prefix in preferences {
-            if let model = models.first(where: { $0.name.lowercased().contains(prefix) }) {
-                return model.name
-            }
-        }
-        return models.first?.name
-    }
-
-    private static func isEVAModel(_ name: String) -> Bool {
-        let normalized = name.lowercased()
-        return normalized == "eva" || normalized.hasPrefix("eva:")
-    }
-
-    private static func isBrokenUpstreamQwenModel(_ name: String) -> Bool {
-        name.lowercased().contains("mradermacher/qwen3-14b-uncensored-gguf")
-    }
-
-    private func friendlyConnectionError(_ error: Error) -> String {
-        if let urlError = error as? URLError,
-           [.cannotConnectToHost, .networkConnectionLost, .timedOut].contains(urlError.code) {
-            return "连接不到 Ollama。请先打开 Ollama 应用，确认服务地址为 \(serverAddress)。"
-        }
-        return error.localizedDescription
-    }
-
-    private func inferredEmotion(from text: String) -> EmotionDirective {
-        if text.contains("开心") || text.contains("太好了") || text.contains("哈哈") {
-            return EmotionDirective(emotion: .happy, valence: 0.75, arousal: 0.58, intensity: 0.7)
-        }
-        if text.contains("担心") || text.contains("难过") || text.contains("抱抱") {
-            return EmotionDirective(emotion: .concerned, valence: -0.18, arousal: 0.3, intensity: 0.62)
-        }
-        return EmotionDirective(emotion: .warm, valence: 0.25, arousal: 0.2, intensity: 0.35)
+        return "刚才那一下我没接住。你再跟我说一遍？"
     }
 
     private func scheduleIdleState() {

@@ -3,3 +3,8 @@
 dist/
 .swiftpm/
 xcuserdata/
+DerivedData/
+EVA.xcodeproj/
+.eva-models/
+Resources/Models/*
+!Resources/Models/.gitkeep

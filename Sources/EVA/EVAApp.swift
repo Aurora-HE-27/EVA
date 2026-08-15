@@ -7,7 +7,13 @@ struct EVAApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            Group {
+                if appState.hasCompletedOnboarding {
+                    ContentView()
+                } else {
+                    OnboardingView()
+                }
+            }
                 .environmentObject(appState)
                 .frame(minWidth: 920, minHeight: 620)
                 .task {
