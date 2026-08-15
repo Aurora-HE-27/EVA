@@ -36,14 +36,15 @@ final class LocalLanguageModel {
                 instructions: systemPrompt,
                 history: restoredHistory,
                 generateParameters: GenerateParameters(
-                    maxTokens: 320,
+                    maxTokens: 128,
                     maxKVSize: 4096,
                     kvBits: 8,
-                    temperature: 0.72,
-                    topP: 0.9,
-                    repetitionPenalty: 1.08,
-                    repetitionContextSize: 64
-                )
+                    temperature: 0.68,
+                    topP: 0.90,
+                    repetitionPenalty: 1.05,
+                    repetitionContextSize: 128
+                ),
+                additionalContext: ["enable_thinking": false]
             )
             loadState = .ready
         } catch {

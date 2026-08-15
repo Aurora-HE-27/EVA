@@ -17,7 +17,12 @@ final class CompanionProfileTests: XCTestCase {
         XCTAssertTrue(prompt.contains("阿凯"))
         XCTAssertFalse(prompt.contains("小雨\n"))
         XCTAssertFalse(prompt.contains("[[EVA"))
-        XCTAssertTrue(prompt.contains("只输出直接给用户阅读的自然语言正文"))
+        XCTAssertTrue(prompt.contains("回复默认只会被用户听见"))
+        XCTAssertTrue(prompt.contains("你不是心理咨询师"))
+        XCTAssertTrue(prompt.contains("像朋友聊天"))
+        XCTAssertTrue(prompt.contains("不必每轮提问"))
+        XCTAssertTrue(prompt.contains("只输出用户应该直接听到的自然语言"))
+        XCTAssertTrue(prompt.contains("Markdown、Emoji"))
     }
 
     func testProfileStoreOnlyLoadsCompletedProfile() throws {

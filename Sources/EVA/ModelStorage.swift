@@ -1,11 +1,20 @@
 import Foundation
 
 enum ModelStorage {
-    static let languageModelDirectoryName = "Qwen3.5-0.8B-MLX-4bit"
+    static let languageModelDirectoryName = "Qwen3.5-2B-MLX-4bit"
+    static let speechModelDirectoryName = "Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit"
 
     static var rootURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "AI开发/ai模型", directoryHint: .isDirectory)
+        if let configuredPath = ProcessInfo.processInfo.environment["EVA_MODEL_ROOT"],
+           !configuredPath.isEmpty {
+            return URL(filePath: configuredPath, directoryHint: .isDirectory)
+                .deletingLastPathComponent()
+        }
+
+        return FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        )[0].appending(path: "EVA/Models", directoryHint: .isDirectory)
     }
 
     static var huggingFaceURL: URL {
@@ -35,6 +44,29 @@ enum ModelStorage {
         }
 
         throw AppError.localModelMissing(developmentURL)
+    }
+
+    static func speechModelURL(bundle: Bundle = .main) throws -> URL {
+        if let bundledURL = bundle.url(
+            forResource: speechModelDirectoryName,
+            withExtension: nil,
+            subdirectory: "Models"
+        ) {
+            return bundledURL
+        }
+
+        let developmentURL = huggingFaceURL
+            .appending(path: "mlx-community", directoryHint: .isDirectory)
+            .appending(path: speechModelDirectoryName, directoryHint: .isDirectory)
+        if FileManager.default.fileExists(
+            atPath: developmentURL.appending(path: "model.safetensors").path
+        ), FileManager.default.fileExists(
+            atPath: developmentURL.appending(path: "speech_tokenizer/model.safetensors").path
+        ) {
+            return developmentURL
+        }
+
+        throw NeuralSpeechError.modelMissing(developmentURL)
     }
 
     static func prepareDirectories() throws {

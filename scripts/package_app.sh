@@ -2,17 +2,25 @@
 set -euo pipefail
 
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
-model_name="Qwen3.5-0.8B-MLX-4bit"
-model_source="${EVA_MODEL_SOURCE:-/Users/hewenkai/AI开发/ai模型/huggingface/mlx-community/$model_name}"
+model_root="${EVA_MODEL_ROOT:-$project_dir/.eva-models/huggingface}"
+model_name="Qwen3.5-2B-MLX-4bit"
+model_source="${EVA_MODEL_SOURCE:-$model_root/mlx-community/$model_name}"
 model_link="$project_dir/Resources/Models/$model_name"
+speech_model_name="Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit"
+speech_model_source="${EVA_SPEECH_MODEL_SOURCE:-$model_root/mlx-community/$speech_model_name}"
+speech_model_link="$project_dir/Resources/Models/$speech_model_name"
 derived_data="$project_dir/DerivedData"
 app_source="$derived_data/Build/Products/Release/EVA.app"
 app_destination="$project_dir/dist/EVA.app"
 created_link=0
+created_speech_link=0
 
-if [[ ! -f "$model_source/config.json" ]]; then
-    echo "未找到 EVA 本地模型：$model_source" >&2
-    exit 1
+if [[ ! -f "$model_source/config.json" || ! -f "$speech_model_source/model.safetensors" || ! -f "$speech_model_source/speech_tokenizer/model.safetensors" ]]; then
+    if [[ -n "${EVA_MODEL_SOURCE:-}" || -n "${EVA_SPEECH_MODEL_SOURCE:-}" ]]; then
+        echo "指定的 EVA 模型目录不完整。" >&2
+        exit 1
+    fi
+    EVA_MODEL_ROOT="$model_root" "$project_dir/scripts/download_eva_models.sh"
 fi
 
 mkdir -p "$project_dir/Resources/Models"
@@ -30,9 +38,25 @@ else
     created_link=1
 fi
 
+if [[ -L "$speech_model_link" ]]; then
+    if [[ "$(readlink "$speech_model_link")" != "$speech_model_source" ]]; then
+        echo "语音模型软链接指向了其他位置：$speech_model_link" >&2
+        exit 1
+    fi
+elif [[ -e "$speech_model_link" ]]; then
+    echo "语音模型目标已存在且不是软链接：$speech_model_link" >&2
+    exit 1
+else
+    ln -s "$speech_model_source" "$speech_model_link"
+    created_speech_link=1
+fi
+
 cleanup() {
     if [[ "$created_link" == "1" && -L "$model_link" ]]; then
         unlink "$model_link"
+    fi
+    if [[ "$created_speech_link" == "1" && -L "$speech_model_link" ]]; then
+        unlink "$speech_model_link"
     fi
 }
 trap cleanup EXIT

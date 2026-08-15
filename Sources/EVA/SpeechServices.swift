@@ -9,8 +9,34 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
     var onSpeakingChanged: ((Bool) -> Void)?
 
     static let retiredMLXVoiceIdentifier = "eva.qwen3.voice-design"
+    static let retiredKokoroVoiceIdentifiers: Set<String> = [
+        "eva.kokoro.zf_001",
+        "eva.kokoro.zm_009",
+        "eva.kokoro.zf_032"
+    ]
+    static let neuralFeminineVoiceIdentifier = "eva.qwen3tts.serena"
+    static let neuralBrightVoiceIdentifier = "eva.qwen3tts.vivian"
+    static let neuralMasculineVoiceIdentifier = "eva.qwen3tts.dylan"
+    static let neuralNeutralVoiceIdentifier = neuralBrightVoiceIdentifier
+
+    static let neuralVoiceOptions: [(identifier: String, label: String)] = [
+        (neuralFeminineVoiceIdentifier, "Serena · 温柔年轻女声"),
+        (neuralBrightVoiceIdentifier, "Vivian · 明亮年轻女声"),
+        (neuralMasculineVoiceIdentifier, "Dylan · 年轻男声")
+    ]
+
+    private struct SpeechItem {
+        let text: String
+        let voiceIdentifier: String
+        let rate: Double
+        let emotion: EmotionDirective
+    }
 
     private let synthesizer = AVSpeechSynthesizer()
+    private let neuralEngine = QwenSpeechEngine()
+    private var neuralQueue: [SpeechItem] = []
+    private var neuralTask: Task<Void, Never>?
+    private var audioPlayer: AVAudioPlayer?
 
     override init() {
         super.init()
@@ -34,6 +60,23 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
             ?? ""
     }
 
+    static func neuralVoiceIdentifier(for gender: CompanionGender) -> String {
+        switch gender {
+        case .feminine: neuralFeminineVoiceIdentifier
+        case .masculine: neuralMasculineVoiceIdentifier
+        case .neutral: neuralNeutralVoiceIdentifier
+        }
+    }
+
+    static func isNeuralVoiceIdentifier(_ identifier: String?) -> Bool {
+        guard let identifier else { return false }
+        return neuralVoiceOptions.contains { $0.identifier == identifier }
+    }
+
+    func prepareNeuralVoice() {
+        _ = try? ModelStorage.speechModelURL()
+    }
+
     func enqueue(
         _ text: String,
         voiceIdentifier: String?,
@@ -41,8 +84,21 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         pitch: Double = 1.02,
         emotion: EmotionDirective = .neutral
     ) {
-        let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanText = SpokenTextNormalizer.normalize(text)
         guard !cleanText.isEmpty else { return }
+
+        if Self.isNeuralVoiceIdentifier(voiceIdentifier) {
+            neuralQueue.append(
+                SpeechItem(
+                    text: cleanText,
+                    voiceIdentifier: voiceIdentifier ?? Self.neuralFeminineVoiceIdentifier,
+                    rate: rate,
+                    emotion: emotion
+                )
+            )
+            beginNeuralProcessingIfNeeded()
+            return
+        }
 
         let adjustment = Self.voiceAdjustment(for: emotion)
         let utterance = AVSpeechUtterance(string: cleanText)
@@ -53,13 +109,19 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
             ?? AVSpeechSynthesisVoice(identifier: Self.systemFallbackVoiceIdentifier)
             ?? AVSpeechSynthesisVoice(language: "zh-CN")
         utterance.rate = Float(min(max(rate * adjustment.rate, 0.35), 0.62))
-        utterance.pitchMultiplier = Float(min(max(pitch * adjustment.pitch, 0.8), 1.25))
+        utterance.pitchMultiplier = Float(min(max(pitch * adjustment.pitch, 0.92), 1.08))
+        utterance.volume = Float(adjustment.volume)
         utterance.preUtteranceDelay = adjustment.preDelay
         utterance.postUtteranceDelay = adjustment.postDelay
         synthesizer.speak(utterance)
     }
 
     func stop() {
+        neuralTask?.cancel()
+        neuralTask = nil
+        neuralQueue.removeAll()
+        audioPlayer?.stop()
+        audioPlayer = nil
         synthesizer.stopSpeaking(at: .immediate)
         setSpeaking(false)
     }
@@ -68,24 +130,92 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         stop()
     }
 
+    private func beginNeuralProcessingIfNeeded() {
+        guard neuralTask == nil else { return }
+        neuralTask = Task { [weak self] in
+            await self?.processNeuralQueue()
+        }
+    }
+
+    private func processNeuralQueue() async {
+        setSpeaking(true)
+        defer {
+            neuralTask = nil
+            audioPlayer = nil
+            if !synthesizer.isSpeaking {
+                setSpeaking(false)
+            }
+        }
+
+        while !neuralQueue.isEmpty, !Task.isCancelled {
+            let item = neuralQueue.removeFirst()
+            do {
+                let audio = try await neuralEngine.synthesize(
+                    text: item.text,
+                    speaker: Self.speakerName(for: item.voiceIdentifier),
+                    // Let the speaker model infer understated prosody from the
+                    // sentence itself. Repeating an emotion/style direction on
+                    // every turn produces the uncanny "performed" delivery that
+                    // is especially noticeable in intimate conversation.
+                    instruction: nil
+                )
+                guard !Task.isCancelled else { break }
+                let player = try AVAudioPlayer(data: WaveEncoder.pcm16Data(from: audio))
+                audioPlayer = player
+                player.prepareToPlay()
+                player.play()
+                while player.isPlaying, !Task.isCancelled {
+                    try await Task.sleep(for: .milliseconds(40))
+                }
+            } catch is CancellationError {
+                break
+            } catch {
+                speakWithSystemFallback(item)
+            }
+        }
+        await neuralEngine.release()
+    }
+
+    private func speakWithSystemFallback(_ item: SpeechItem) {
+        let adjustment = Self.voiceAdjustment(for: item.emotion)
+        let utterance = AVSpeechUtterance(string: item.text)
+        utterance.voice = AVSpeechSynthesisVoice(identifier: Self.systemFallbackVoiceIdentifier)
+            ?? AVSpeechSynthesisVoice(language: "zh-CN")
+        utterance.rate = Float(min(max(item.rate * adjustment.rate, 0.35), 0.58))
+        utterance.pitchMultiplier = Float(adjustment.pitch)
+        utterance.volume = Float(adjustment.volume)
+        utterance.preUtteranceDelay = adjustment.preDelay
+        utterance.postUtteranceDelay = adjustment.postDelay
+        synthesizer.speak(utterance)
+    }
+
+    private static func speakerName(for identifier: String) -> String {
+        switch identifier {
+        case neuralBrightVoiceIdentifier: "Vivian"
+        case neuralMasculineVoiceIdentifier: "Dylan"
+        default: "Serena"
+        }
+    }
+
     private static func voiceAdjustment(
         for emotion: EmotionDirective
-    ) -> (rate: Double, pitch: Double, preDelay: TimeInterval, postDelay: TimeInterval) {
-        let base: (rate: Double, pitch: Double, preDelay: TimeInterval, postDelay: TimeInterval) =
+    ) -> (rate: Double, pitch: Double, volume: Double, preDelay: TimeInterval, postDelay: TimeInterval) {
+        let base: (rate: Double, pitch: Double, volume: Double, preDelay: TimeInterval, postDelay: TimeInterval) =
             switch emotion.emotion {
-            case .neutral: (1, 1, 0.02, 0.05)
-            case .warm: (0.95, 1.01, 0.04, 0.08)
-            case .happy: (1.04, 1.04, 0.01, 0.04)
-            case .concerned: (0.91, 0.98, 0.07, 0.10)
-            case .sad: (0.88, 0.95, 0.08, 0.12)
-            case .surprised: (1.06, 1.07, 0.01, 0.04)
-            case .focused: (0.98, 0.99, 0.03, 0.05)
+            case .neutral: (1, 1, 1, 0.02, 0.07)
+            case .warm: (0.94, 1.005, 0.96, 0.05, 0.12)
+            case .happy: (1.05, 1.02, 1, 0.01, 0.06)
+            case .concerned: (0.89, 0.99, 0.93, 0.08, 0.16)
+            case .sad: (0.84, 0.98, 0.90, 0.10, 0.20)
+            case .surprised: (1.07, 1.025, 1, 0.01, 0.05)
+            case .focused: (0.97, 0.995, 0.98, 0.03, 0.08)
             }
         let arousalRate = 0.94 + emotion.arousal * 0.12
         let valencePitch = 1 + emotion.valence * 0.025
         return (
             base.rate * arousalRate,
             base.pitch * valencePitch,
+            base.volume,
             base.preDelay,
             base.postDelay
         )

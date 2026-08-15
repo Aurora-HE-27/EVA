@@ -22,7 +22,7 @@ struct SettingsView: View {
                         Circle()
                             .fill(appState.isLocalModelReady ? Color.green : Color.orange)
                             .frame(width: 7, height: 7)
-                        Text("Qwen3.5 0.8B · 4-bit · MLX")
+                        Text("Qwen3.5 2B · 4-bit · MLX")
                     }
                 }
 
@@ -32,16 +32,26 @@ struct SettingsView: View {
                 }
 
                 Picker("中文声音", selection: $appState.selectedVoiceIdentifier) {
+                    Section("EVA 神经声线（推荐）") {
+                        ForEach(
+                            SpeechOutputService.neuralVoiceOptions,
+                            id: \.identifier
+                        ) { option in
+                            Text(option.label).tag(option.identifier)
+                        }
+                    }
+                    Section("macOS 系统声线（备用）") {
                     Text("系统默认").tag("")
                     ForEach(SpeechOutputService.availableVoices, id: \.identifier) { voice in
                         Text(voiceLabel(voice)).tag(voice.identifier)
+                    }
                     }
                 }
 
                 HStack {
                     Text("AI 模型目录")
                     Spacer()
-                    Text("~/AI开发/ai模型/huggingface")
+                    Text("EVA.app 内置模型")
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundStyle(.secondary)
@@ -62,18 +72,25 @@ struct SettingsView: View {
                         .frame(width: 34)
                 }
 
-                HStack {
-                    Text("音高")
-                    Slider(value: $appState.voicePitch, in: 0.85...1.18, step: 0.01)
-                    Text(appState.voicePitch.formatted(.number.precision(.fractionLength(2))))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                        .frame(width: 34)
+                if SpeechOutputService.isNeuralVoiceIdentifier(appState.selectedVoiceIdentifier) {
+                    LabeledContent("情绪韵律") {
+                        Text("自动 · 本地神经语音")
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    HStack {
+                        Text("音高")
+                        Slider(value: $appState.voicePitch, in: 0.92...1.08, step: 0.01)
+                        Text(appState.voicePitch.formatted(.number.precision(.fractionLength(2))))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .frame(width: 34)
+                    }
                 }
             }
             .formStyle(.grouped)
 
-            Text("对话、历史记录、语音识别与语音合成都在这台 Mac 上完成。EVA 不包含 API 密钥，也不会将对话发送到网络。")
+            Text("EVA 默认只用连续语音回答，隐藏文字仅保存在本机用于上下文和记忆。语音播放前会自动过滤 Emoji 和动作标签；EVA 不包含 API 密钥，也不会将对话发送到网络。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

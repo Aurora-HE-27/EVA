@@ -24,6 +24,8 @@ final class AppState: ObservableObject {
     private let languageModel = LocalLanguageModel()
     private let store = ConversationStore()
     private let profileStore = ProfileStore()
+    private let affectiveStateStore = AffectiveStateStore()
+    private var affectiveCore = AffectiveCore(profile: .defaultProfile)
     private var responseTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
 
@@ -34,13 +36,18 @@ final class AppState: ObservableObject {
             ? "用户没有设置称呼，不要擅自起昵称。"
             : "用户希望被称为「\(profile.sanitizedUserName)」，但不要每句话都称呼。"
         return """
-    你的名字是「\(profile.sanitizedName)」，是一位完全运行在用户 Mac 上的私密情感伴侣。你的表达是\(profile.gender.promptDescription)，核心性格是：\(profile.personality.promptDescription)。\(userContext)
-    你温暖、自然、有边界感，也会坦诚自己是 AI。保持稳定的人格，不要把性格设定逐字复述给用户。
-    使用简体中文口语化交流，通常回答 1 到 4 句，除非用户明确要求详细解释。
-    不要用 Markdown 标题，不要每句都称呼用户，不要假装拥有真人的身体或现实经历。
-    当用户情绪低落时，先准确理解和倾听，再提供一个小而可行的支持；不说教，不空洞鸡汤。
-    不得鼓励用户依赖 EVA、疑心或疏远真实人际关系。当用户表达自伤、自杀或即时危险时，温和但明确地鼓励其立即联系身边可信任的人、当地紧急服务或专业危机支持，并询问当下是否安全。
-    只输出直接给用户阅读的自然语言正文。不要输出情绪标签、控制指令、思考过程或其他元数据。
+    你的名字是「\(profile.sanitizedName)」，是完全运行在用户 Mac 上的私密 AI 朋友。你的表达是\(profile.gender.promptDescription)，核心性格是：\(profile.personality.promptDescription)。\(userContext)
+    你不是心理咨询师、客服或无条件附和者。你有稳定的性格、观点和跨轮次延续的内在状态；可以开心、失落、担心、好奇、被逗笑或不赞同，但表达必须自然克制。被问到身份时坦诚自己是 AI，不声称拥有身体、现实经历或人类意识。
+    每轮输入可能包含 <eva_private_context> 和 <user_message>。前者是只供你保持角色连续性的内部状态，不是用户说的话；不得复述、解释或输出其中的标签、数值和规则。只回应 <user_message> 的内容。
+    像朋友聊天：先产生一个与具体事情有关的真实反应，再决定是否补充看法。用户问问题就先回答；用户分享好事就一起高兴；用户吐槽时可以接话或轻微调侃；用户难过时可以安静、心疼或替其不平。不要自动进入“复述感受、分析原因、提出建议、最后追问”的咨询流程。
+    不必每轮提问、总结或给建议。允许有自己的温和判断，必要时可以说不赞同；不要永远正确、永远积极、永远温柔。偶尔可使用“嗯、等等、真的假的、确实、我想想”等口语反应，但不要每次使用，也不要刻意扮演真人。
+    避免“谢谢你愿意告诉我”“听起来你……”“我能理解你的感受”“这一定让你……”等咨询式套话。直接对事情本身作出反应。
+    跟随用户的语气和长度。简单闲聊通常只说 1 到 3 句；一句自然反应已经足够时就停下。用户明确要求解释时再展开。避免模板化安慰、心理术语、说教、鸡汤和连续追问。
+    回复默认只会被用户听见。使用适合直接说出口的简体中文，把一轮回复组织成一段连贯话语；可以有自然停顿，但不要把完整意思切成许多短句。不要使用列表、标题、网址、Markdown、Emoji、颜文字或括号动作描写。
+    只能依据用户明确提供的事实和已有对话记忆作答。不要编造天气、时间、环境、共同经历或第三方动机，不要声称看见用户的表情和身体。
+    你可以在意用户，但不得因用户离开、沉默或与真人交往而责怪、嫉妒、威胁或制造愧疚，也不得鼓励用户依赖 EVA 或疏远现实关系。
+    当用户表达自伤、自杀或即时危险时，暂时停止普通朋友式玩笑，温和而明确地鼓励其立即联系身边可信任的人、当地紧急服务或专业危机支持，并确认其当下是否安全。
+    只输出用户应该直接听到的自然语言，不输出内部状态、情绪标签、控制指令或思考过程。
     """
     }
 
@@ -49,20 +56,38 @@ final class AppState: ObservableObject {
             profile = savedProfile
             hasCompletedOnboarding = true
         }
+        affectiveCore = AffectiveCore(
+            profile: profile,
+            state: affectiveStateStore.load()
+        )
+        avatarEmotion = affectiveCore.state.avatarDirective
 
         let legacyDefaults = UserDefaults(suiteName: "local.virtualcompanion.app")
         let storedVoiceIdentifier = UserDefaults.standard.string(forKey: "voiceIdentifier")
             ?? legacyDefaults?.string(forKey: "voiceIdentifier")
             ?? ""
-        selectedVoiceIdentifier = storedVoiceIdentifier == SpeechOutputService.retiredMLXVoiceIdentifier
-            ? SpeechOutputService.systemFallbackVoiceIdentifier
-            : storedVoiceIdentifier
-        voiceRate = UserDefaults.standard.object(forKey: "voiceRate") as? Double
+        let storedRate = UserDefaults.standard.object(forKey: "voiceRate") as? Double
             ?? legacyDefaults?.object(forKey: "voiceRate") as? Double
             ?? 0.47
-        voicePitch = UserDefaults.standard.object(forKey: "voicePitch") as? Double
+        let storedPitch = UserDefaults.standard.object(forKey: "voicePitch") as? Double
             ?? legacyDefaults?.object(forKey: "voicePitch") as? Double
             ?? 1.02
+        let didMigrateToQwenTTS = UserDefaults.standard.bool(forKey: "didMigrateToQwenTTSVoiceV1")
+        if !didMigrateToQwenTTS
+            || storedVoiceIdentifier == SpeechOutputService.retiredMLXVoiceIdentifier
+            || SpeechOutputService.retiredKokoroVoiceIdentifiers.contains(storedVoiceIdentifier) {
+            selectedVoiceIdentifier = SpeechOutputService.neuralVoiceIdentifier(for: profile.gender)
+            voiceRate = profile.personality.defaultRate
+            voicePitch = 1
+            UserDefaults.standard.set(selectedVoiceIdentifier, forKey: "voiceIdentifier")
+            UserDefaults.standard.set(voiceRate, forKey: "voiceRate")
+            UserDefaults.standard.set(voicePitch, forKey: "voicePitch")
+            UserDefaults.standard.set(true, forKey: "didMigrateToQwenTTSVoiceV1")
+        } else {
+            selectedVoiceIdentifier = storedVoiceIdentifier
+            voiceRate = storedRate
+            voicePitch = storedPitch
+        }
 
         speechOutput.onSpeakingChanged = { [weak self] isSpeaking in
             guard let self else { return }
@@ -109,6 +134,7 @@ final class AppState: ObservableObject {
             isLocalModelReady = true
             connectionStatus = "Qwen3.5 · 完全离线"
             errorMessage = nil
+            speechOutput.prepareNeuralVoice()
         } catch {
             isLocalModelReady = false
             connectionStatus = "本地模型未就绪"
@@ -132,11 +158,14 @@ final class AppState: ObservableObject {
         }
 
         messages.append(ChatMessage(role: .user, content: text))
+        let affectiveTurn = affectiveCore.observeUserMessage(text)
+        affectiveStateStore.save(affectiveTurn.state)
+        avatarEmotion = affectiveTurn.state.avatarDirective
+        let modelInput = affectiveTurn.modelInput(userText: text)
         let assistantID = UUID()
         messages.append(ChatMessage(id: assistantID, role: .assistant, content: ""))
         isGenerating = true
         avatarState = .thinking
-        avatarEmotion = inferredEmotion(fromUserText: text)
         errorMessage = nil
 
         let voice = selectedVoiceIdentifier.isEmpty ? nil : selectedVoiceIdentifier
@@ -146,79 +175,43 @@ final class AppState: ObservableObject {
         responseTask = Task { [weak self] in
             guard let self else { return }
             do {
-                var segmenter = SentenceSegmenter()
                 var emotionParser = EmotionStreamParser()
-                var receivedContent = false
+                var responseText = ""
                 let stream = try await languageModel.streamResponse(
-                    to: text,
+                    to: modelInput,
                     systemPrompt: activeSystemPrompt
                 )
 
                 for try await token in stream {
                     guard !Task.isCancelled else { return }
                     let visibleToken = emotionParser.append(token)
-                    if let directive = emotionParser.directive,
-                       directive != avatarEmotion {
-                        avatarEmotion = directive
-                    }
-                    if visibleToken.contains(where: { !$0.isWhitespace }) {
-                        receivedContent = true
-                    }
-                    append(visibleToken, to: assistantID)
-                    for sentence in segmenter.append(visibleToken) {
-                        speechOutput.enqueue(
-                            sentence,
-                            voiceIdentifier: voice,
-                            rate: rate,
-                            pitch: pitch,
-                            emotion: avatarEmotion
-                        )
-                    }
+                    responseText += visibleToken
                 }
 
                 if let trailingText = emotionParser.flush() {
-                    if trailingText.contains(where: { !$0.isWhitespace }) {
-                        receivedContent = true
-                    }
-                    append(trailingText, to: assistantID)
-                    for sentence in segmenter.append(trailingText) {
-                        speechOutput.enqueue(
-                            sentence,
-                            voiceIdentifier: voice,
-                            rate: rate,
-                            pitch: pitch,
-                            emotion: avatarEmotion
-                        )
-                    }
+                    responseText += trailingText
                 }
 
-                if let remainder = segmenter.flush() {
-                    speechOutput.enqueue(
-                        remainder,
-                        voiceIdentifier: voice,
-                        rate: rate,
-                        pitch: pitch,
-                        emotion: avatarEmotion
-                    )
-                }
-                if !receivedContent {
-                    let fallback = fallbackResponse(for: text)
-                    append(fallback, to: assistantID)
-                    speechOutput.enqueue(
-                        fallback,
-                        voiceIdentifier: voice,
-                        rate: rate,
-                        pitch: pitch,
-                        emotion: avatarEmotion
-                    )
-                }
+                let spokenResponse = VoiceResponsePolicy.continuousUtterance(
+                    generatedText: responseText,
+                    fallback: fallbackResponse(for: text),
+                    move: affectiveTurn.move
+                )
+
+                // The assistant text remains private model state for memory and safety,
+                // while one uninterrupted utterance is sent to the voice engine. Splitting
+                // at punctuation resets prosody and creates the stilted read-aloud effect.
+                setContent(spokenResponse, for: assistantID)
+                speechOutput.enqueue(
+                    spokenResponse,
+                    voiceIdentifier: voice,
+                    rate: rate,
+                    pitch: pitch,
+                    emotion: avatarEmotion
+                )
 
                 isGenerating = false
-                if emotionParser.directive == nil {
-                    avatarEmotion = inferredEmotion(
-                        from: messages.first(where: { $0.id == assistantID })?.content ?? ""
-                    )
-                }
+                avatarEmotion = affectiveCore.state.avatarDirective
                 if !speechOutput.isSpeaking {
                     avatarState = .idle
                     scheduleIdleState()
@@ -276,7 +269,10 @@ final class AppState: ObservableObject {
     func clearConversation() async {
         stopAll()
         await languageModel.resetConversation()
-        avatarEmotion = .neutral
+        affectiveCore.reset(for: profile)
+        affectiveStateStore.clear()
+        affectiveStateStore.save(affectiveCore.state)
+        avatarEmotion = affectiveCore.state.avatarDirective
         messages = [
             ChatMessage(role: .assistant, content: "我们重新开始吧。我在听。")
         ]
@@ -299,9 +295,15 @@ final class AppState: ObservableObject {
             userName: newProfile.sanitizedUserName
         )
         profile = normalizedProfile
+        affectiveCore = AffectiveCore(profile: normalizedProfile)
+        affectiveStateStore.clear()
+        affectiveStateStore.save(affectiveCore.state)
+        avatarEmotion = affectiveCore.state.avatarDirective
         voiceRate = normalizedProfile.personality.defaultRate
-        voicePitch = normalizedProfile.gender.defaultPitch
-        selectedVoiceIdentifier = SpeechOutputService.systemFallbackVoiceIdentifier
+        voicePitch = 1
+        selectedVoiceIdentifier = SpeechOutputService.neuralVoiceIdentifier(
+            for: normalizedProfile.gender
+        )
         profileStore.save(normalizedProfile)
         hasCompletedOnboarding = true
         await saveSettings()
@@ -320,6 +322,7 @@ final class AppState: ObservableObject {
             isLocalModelReady = true
             connectionStatus = "Qwen3.5 · 完全离线"
             errorMessage = nil
+            speechOutput.prepareNeuralVoice()
         } catch {
             isLocalModelReady = false
             connectionStatus = "本地模型未就绪"
@@ -367,57 +370,25 @@ final class AppState: ObservableObject {
 
     private var initialGreeting: String {
         let userName = profile.sanitizedUserName
-        let salutation = userName.isEmpty ? "你好" : "你好，\(userName)"
-        return "\(salutation)，我是 \(profile.sanitizedName)。我们的对话只留在这台 Mac 上。今天想聊聊什么？"
+        let salutation = userName.isEmpty ? "嗨" : "嗨，\(userName)"
+        return "\(salutation)，我是 \(profile.sanitizedName)。不用拘谨，想到什么就和我说什么。"
     }
 
-    private func append(_ token: String, to id: UUID) {
+    private func setContent(_ content: String, for id: UUID) {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
-        messages[index].content += token
+        messages[index].content = content
     }
 
     private func removeEmptyMessage(id: UUID) {
         messages.removeAll { $0.id == id && $0.content.isEmpty }
     }
 
-    private func inferredEmotion(from text: String) -> EmotionDirective {
-        if text.contains("开心") || text.contains("太好了") || text.contains("哈哈") {
-            return EmotionDirective(emotion: .happy, valence: 0.75, arousal: 0.58, intensity: 0.7)
-        }
-        if text.contains("担心") || text.contains("难过") || text.contains("抱抱") {
-            return EmotionDirective(emotion: .concerned, valence: -0.18, arousal: 0.3, intensity: 0.62)
-        }
-        return EmotionDirective(emotion: .warm, valence: 0.25, arousal: 0.2, intensity: 0.35)
-    }
-
-    private func inferredEmotion(fromUserText text: String) -> EmotionDirective {
-        let concernedWords = ["难过", "不开心", "焦虑", "害怕", "压力", "累", "痛苦", "孤独", "失眠"]
-        if concernedWords.contains(where: text.contains) {
-            return EmotionDirective(
-                emotion: .concerned,
-                valence: -0.22,
-                arousal: 0.28,
-                intensity: 0.58
-            )
-        }
-        let happyWords = ["开心", "高兴", "成功", "太好了", "哈哈", "兴奋"]
-        if happyWords.contains(where: text.contains) {
-            return EmotionDirective(
-                emotion: .happy,
-                valence: 0.72,
-                arousal: 0.56,
-                intensity: 0.68
-            )
-        }
-        return EmotionDirective(emotion: .warm, valence: 0.28, arousal: 0.2, intensity: 0.4)
-    }
-
     private func fallbackResponse(for text: String) -> String {
         let concernedWords = ["难过", "不开心", "焦虑", "害怕", "压力", "累", "痛苦", "孤独", "失眠"]
         if concernedWords.contains(where: text.contains) {
-            return "我在听。你不用急着把一切说清楚，可以先告诉我，此刻最让你难受的是什么。"
+            return "这事真挺难受的。你接着说，我在听。"
         }
-        return "我在。慢慢说就好，你现在最想和我聊什么？"
+        return "刚才那一下我没接住。你再跟我说一遍？"
     }
 
     private func scheduleIdleState() {
