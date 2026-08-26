@@ -58,10 +58,10 @@ targets:
     settings:
       base:
         CODE_SIGN_ENTITLEMENTS: Resources/EVA.entitlements
-        CURRENT_PROJECT_VERSION: 15
+        CURRENT_PROJECT_VERSION: 16
         ENABLE_APP_SANDBOX: YES
         INFOPLIST_FILE: Resources/Info.plist
-        MARKETING_VERSION: 0.10.0
+        MARKETING_VERSION: 0.11.0
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
         OTHER_LDFLAGS: "$(inherited) -lc++"
         PRODUCT_BUNDLE_IDENTIFIER: com.aurorahe27.eva
@@ -72,6 +72,10 @@ targets:
         basedOnDependencyAnalysis: false
         script: |
           set -euo pipefail
+          if [[ "${EVA_SKIP_MODEL_EMBED:-0}" == "1" ]]; then
+            echo "Skipping local model embedding for source-only build."
+            exit 0
+          fi
           model_name="Qwen3.5-2B-MLX-4bit"
           model_source="${SRCROOT}/Resources/Models/${model_name}"
           model_destination="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Models/${model_name}"

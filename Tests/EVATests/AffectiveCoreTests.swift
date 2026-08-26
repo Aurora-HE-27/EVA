@@ -70,10 +70,10 @@ final class AffectiveCoreTests: XCTestCase {
     }
 
     func testAffectiveStateStoreRoundTripsAndClears() throws {
-        let suiteName = "EVA.AffectiveCoreTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-        let store = AffectiveStateStore(defaults: defaults)
+        let fileURL = FileManager.default.temporaryDirectory
+            .appending(path: "eva-state-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let store = AffectiveStateStore(fileURL: fileURL)
         let state = AffectiveState.baseline(for: .cheerful)
 
         XCTAssertNil(store.load())

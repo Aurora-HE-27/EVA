@@ -6,5 +6,6 @@ xcuserdata/
 DerivedData/
 EVA.xcodeproj/
 .eva-models/
+.eva-data/
 Resources/Models/*
 !Resources/Models/.gitkeep

@@ -90,9 +90,18 @@ struct CompanionProfile: Codable, Equatable, Sendable {
     static let defaultProfile = CompanionProfile(
         name: "EVA",
         gender: .feminine,
-        personality: .gentle,
+        personality: .candid,
         userName: ""
     )
+
+    static func eva(userName: String = "") -> CompanionProfile {
+        CompanionProfile(
+            name: "EVA",
+            gender: .feminine,
+            personality: .candid,
+            userName: userName
+        )
+    }
 
     var sanitizedName: String {
         Self.sanitize(name, fallback: "EVA")
@@ -191,22 +200,18 @@ struct ChatMessage: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
-enum AvatarState: String, Sendable {
-    case idle
-    case listening
+enum ConversationPhase: String, Sendable {
+    case ready
     case thinking
+    case preparingVoice
     case speaking
-    case happy
-    case concerned
 
     var statusText: String {
         switch self {
-        case .idle: "陪着你"
-        case .listening: "正在听"
+        case .ready: "在线"
         case .thinking: "正在想"
-        case .speaking: "正在说"
-        case .happy: "很开心"
-        case .concerned: "有点担心你"
+        case .preparingVoice: "正在准备声音"
+        case .speaking: "正在说话"
         }
     }
 }

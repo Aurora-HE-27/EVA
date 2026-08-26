@@ -1,24 +1,27 @@
 import Foundation
 
 struct AffectiveStateStore {
-    private let defaults: UserDefaults
-    private let key = "affectiveState.v1"
+    private let fileURL: URL
 
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
+    init(fileURL: URL = ProjectPaths.dataURL.appending(path: "state.json")) {
+        self.fileURL = fileURL
     }
 
     func load() -> AffectiveState? {
-        guard let data = defaults.data(forKey: key) else { return nil }
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
         return try? JSONDecoder().decode(AffectiveState.self, from: data)
     }
 
     func save(_ state: AffectiveState) {
+        try? FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
         guard let data = try? JSONEncoder().encode(state) else { return }
-        defaults.set(data, forKey: key)
+        try? data.write(to: fileURL, options: .atomic)
     }
 
     func clear() {
-        defaults.removeObject(forKey: key)
+        try? FileManager.default.removeItem(at: fileURL)
     }
 }

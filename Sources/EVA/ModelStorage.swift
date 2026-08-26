@@ -4,6 +4,8 @@ enum ModelStorage {
     static let languageModelDirectoryName = "Qwen3.5-2B-MLX-4bit"
     static let speechModelDirectoryName = "Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit"
 
+    static var projectURL: URL { ProjectPaths.rootURL }
+
     static var rootURL: URL {
         if let configuredPath = ProcessInfo.processInfo.environment["EVA_MODEL_ROOT"],
            !configuredPath.isEmpty {
@@ -11,10 +13,10 @@ enum ModelStorage {
                 .deletingLastPathComponent()
         }
 
-        return FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        )[0].appending(path: "EVA/Models", directoryHint: .isDirectory)
+        // EVA is currently a personal, repository-managed project. Keeping the
+        // development weights beside the source makes the whole installation easy
+        // to inspect, move and archive without leaving hidden copies elsewhere.
+        return ProjectPaths.modelRootURL
     }
 
     static var huggingFaceURL: URL {

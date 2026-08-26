@@ -13,8 +13,8 @@ struct SettingsView: View {
                 .font(.system(size: 24, weight: .bold, design: .rounded))
 
             Form {
-                LabeledContent("当前伴侣") {
-                    Text("\(appState.profile.sanitizedName) · \(appState.profile.gender.displayName) · \(appState.profile.personality.displayName)")
+                LabeledContent("身份") {
+                    Text("EVA · 固定人格")
                 }
 
                 LabeledContent("对话核心") {
@@ -22,7 +22,7 @@ struct SettingsView: View {
                         Circle()
                             .fill(appState.isLocalModelReady ? Color.green : Color.orange)
                             .frame(width: 7, height: 7)
-                        Text("Qwen3.5 2B · 4-bit · MLX")
+                        Text("本地文字与神经语音基线")
                     }
                 }
 
@@ -90,7 +90,7 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
 
-            Text("EVA 默认只用连续语音回答，隐藏文字仅保存在本机用于上下文和记忆。语音播放前会自动过滤 Emoji 和动作标签；EVA 不包含 API 密钥，也不会将对话发送到网络。")
+            Text("你只用文字输入；EVA 的回答会显示在对话中并自动播放语音。点击任意一条 EVA 消息下方的扬声器可以重播。语音播放前会过滤 Emoji 和动作标签；当前基线完全在本机运行。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 

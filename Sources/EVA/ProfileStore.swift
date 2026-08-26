@@ -1,25 +1,23 @@
 import Foundation
 
 struct ProfileStore {
-    private let defaults: UserDefaults
-    private let profileKey = "companionProfile.v1"
-    private let completedKey = "hasCompletedOnboarding.v1"
+    private let fileURL: URL
 
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
+    init(fileURL: URL = ProjectPaths.dataURL.appending(path: "profile.json")) {
+        self.fileURL = fileURL
     }
 
     func load() -> CompanionProfile? {
-        guard defaults.bool(forKey: completedKey),
-              let data = defaults.data(forKey: profileKey) else {
-            return nil
-        }
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
         return try? JSONDecoder().decode(CompanionProfile.self, from: data)
     }
 
     func save(_ profile: CompanionProfile) {
+        try? FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
         guard let data = try? JSONEncoder().encode(profile) else { return }
-        defaults.set(data, forKey: profileKey)
-        defaults.set(true, forKey: completedKey)
+        try? data.write(to: fileURL, options: .atomic)
     }
 }

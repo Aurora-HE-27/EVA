@@ -3,19 +3,12 @@ import Foundation
 actor ConversationStore {
     private let fileURL: URL
 
-    init() {
-        let support = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first!
-        let directory = support.appending(path: "EVA", directoryHint: .isDirectory)
+    init(directory: URL = ProjectPaths.dataURL) {
         try? FileManager.default.createDirectory(
             at: directory,
             withIntermediateDirectories: true
         )
-        // v2 intentionally starts clean. Earlier development builds contained
-        // API/Ollama smoke-test messages that must never appear for new users.
-        fileURL = directory.appending(path: "conversation-v2.json")
+        fileURL = directory.appending(path: "conversation.json")
     }
 
     func load() -> [ChatMessage] {
