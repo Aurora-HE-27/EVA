@@ -12,6 +12,7 @@ final class AppState: ObservableObject {
     @Published var voicePitch = 1.02
     @Published var conversationPhase: ConversationPhase = .ready
     @Published var speakingMessageID: UUID?
+    @Published private var transcriptState = VoiceFirstTranscript()
     @Published var isGenerating = false
     @Published var isLocalModelReady = false
     @Published var connectionStatus = "正在准备本地模型…"
@@ -29,6 +30,10 @@ final class AppState: ObservableObject {
     private var currentVoiceState: EmotionDirective = .neutral
     private var responseTask: Task<Void, Never>?
     private var activeResponseID: UUID?
+    private var transcriptRevealTask: Task<Void, Never>?
+    private var persistenceTask: Task<Void, Never>?
+
+    var concealedAssistantMessageIDs: Set<UUID> { transcriptState.concealedIDs }
 
     static let systemPrompt = systemPrompt(for: .defaultProfile)
 
@@ -88,10 +93,24 @@ final class AppState: ObservableObject {
             guard let self else { return }
             if isSpeaking {
                 conversationPhase = .speaking
+                guard let messageID = speakingMessageID else { return }
+                transcriptState.playbackStarted(messageID)
+                persistConversation()
+                scheduleTranscriptReveal(for: messageID)
             } else if !isGenerating {
+                transcriptRevealTask?.cancel()
+                transcriptRevealTask = nil
+                if let messageID = speakingMessageID {
+                    finishTranscript(for: messageID)
+                }
                 conversationPhase = .ready
                 speakingMessageID = nil
             }
+        }
+        speechOutput.onFailure = { [weak self] description in
+            guard let self else { return }
+            stopAll()
+            errorMessage = description
         }
     }
 
@@ -137,6 +156,7 @@ final class AppState: ObservableObject {
             return
         }
 
+        let responseHistory = modelHistory
         messages.append(ChatMessage(role: .user, content: text))
         let affectiveTurn = affectiveCore.observeUserMessage(text)
         affectiveStateStore.save(affectiveTurn.state)
@@ -145,9 +165,11 @@ final class AppState: ObservableObject {
         let assistantID = UUID()
         activeResponseID = assistantID
         messages.append(ChatMessage(id: assistantID, role: .assistant, content: ""))
+        transcriptState.prepare(assistantID)
         isGenerating = true
         conversationPhase = .thinking
         errorMessage = nil
+        persistConversation()
 
         let voice = selectedVoiceIdentifier.isEmpty ? nil : selectedVoiceIdentifier
         let rate = voiceRate
@@ -157,11 +179,14 @@ final class AppState: ObservableObject {
         responseTask = Task { [weak self] in
             guard let self else { return }
             do {
+                try Task.checkCancellation()
+                guard activeResponseID == assistantID else { throw CancellationError() }
                 var emotionParser = EmotionStreamParser()
                 var responseText = ""
                 let stream = try await languageModel.streamResponse(
                     to: modelInput,
-                    systemPrompt: activeSystemPrompt
+                    systemPrompt: activeSystemPrompt,
+                    history: responseHistory
                 )
 
                 for try await token in stream {
@@ -194,24 +219,25 @@ final class AppState: ObservableObject {
                     emotion: voiceState
                 )
                 activeResponseID = nil
-                await store.save(messages)
+                persistConversation()
             } catch is CancellationError {
                 if activeResponseID == assistantID {
                     activeResponseID = nil
                     isGenerating = false
-                    removeEmptyMessage(id: assistantID)
+                    removeMessage(id: assistantID)
                     if !speechOutput.isSpeaking {
                         conversationPhase = .ready
                     }
-                    await store.save(messages)
+                    persistConversation()
                 }
             } catch {
                 guard activeResponseID == assistantID else { return }
                 activeResponseID = nil
-                removeEmptyMessage(id: assistantID)
+                removeMessage(id: assistantID)
                 isGenerating = false
                 conversationPhase = .ready
                 errorMessage = error.localizedDescription
+                persistConversation()
             }
         }
     }
@@ -231,15 +257,20 @@ final class AppState: ObservableObject {
     }
 
     func stopAll() {
+        let interruptedMessageID = speakingMessageID ?? activeResponseID
+
         activeResponseID = nil
         responseTask?.cancel()
         responseTask = nil
-        speechOutput.stop()
+        transcriptRevealTask?.cancel()
+        transcriptRevealTask = nil
         isGenerating = false
         speakingMessageID = nil
         conversationPhase = .ready
-        if let last = messages.last, last.role == .assistant, last.content.isEmpty {
-            messages.removeLast()
+        speechOutput.stop()
+
+        if let interruptedMessageID {
+            finishTranscript(for: interruptedMessageID)
         }
     }
 
@@ -256,6 +287,7 @@ final class AppState: ObservableObject {
         affectiveStateStore.save(affectiveCore.state)
         currentVoiceState = affectiveCore.state.avatarDirective
         messages = [ChatMessage(role: .assistant, content: "我们重新开始吧。你想说什么都可以。")]
+        await persistenceTask?.value
         await store.clear()
         await store.save(messages)
     }
@@ -288,6 +320,7 @@ final class AppState: ObservableObject {
         voicePitch = 1
         await saveSettings()
 
+        await persistenceTask?.value
         await store.clear()
         messages = [ChatMessage(role: .assistant, content: initialGreeting)]
         await store.save(messages)
@@ -358,8 +391,40 @@ final class AppState: ObservableObject {
         messages[index].content = content
     }
 
-    private func removeEmptyMessage(id: UUID) {
-        messages.removeAll { $0.id == id && $0.content.isEmpty }
+    private func removeMessage(id: UUID) {
+        messages.removeAll { $0.id == id }
+        if transcriptState.finish(id) {
+            languageModel.invalidateConversation()
+        }
+    }
+
+    private func finishTranscript(for id: UUID) {
+        if transcriptState.finish(id) {
+            messages.removeAll { $0.id == id }
+            languageModel.invalidateConversation()
+        }
+        persistConversation()
+    }
+
+    private func persistConversation() {
+        let snapshot = transcriptState.restorableMessages(messages)
+        let previousSave = persistenceTask
+        persistenceTask = Task { [store] in
+            await previousSave?.value
+            await store.save(snapshot)
+        }
+    }
+
+    private func scheduleTranscriptReveal(for messageID: UUID) {
+        transcriptRevealTask?.cancel()
+        transcriptRevealTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled, let self else { return }
+            guard speakingMessageID == messageID,
+                  speechOutput.isSpeaking else { return }
+            transcriptState.reveal(messageID)
+            transcriptRevealTask = nil
+        }
     }
 
     private func fallbackResponse(for text: String) -> String {

@@ -3,6 +3,32 @@ import XCTest
 
 @MainActor
 final class LocalLanguageModelTests: XCTestCase {
+    func testDiscardedTurnRestoresOnlyConfirmedHistory() async throws {
+        let model = LocalLanguageModel()
+        let instruction = "记住用户约定的暗号。被问到暗号时，只回答暗号，不要解释。"
+        let abandoned = try await model.streamResponse(
+            to: "我们约定暗号是红苹果。只回复记住了。",
+            systemPrompt: instruction
+        )
+        for try await _ in abandoned {}
+
+        model.invalidateConversation()
+        let restored = try await model.streamResponse(
+            to: "我们约定的暗号是什么？只回答暗号。",
+            systemPrompt: instruction,
+            history: [
+                ChatMessage(role: .user, content: "我们约定暗号是蓝鲸。"),
+                ChatMessage(role: .assistant, content: "记住了。")
+            ]
+        )
+        var response = ""
+        for try await token in restored { response += token }
+
+        XCTAssertTrue(response.contains("蓝鲸"), response)
+        XCTAssertFalse(response.contains("红苹果"), response)
+        XCTAssertEqual(model.loadState, .ready)
+    }
+
     func testStreamsACompleteChineseCompanionResponse() async throws {
         let model = LocalLanguageModel()
         let clock = ContinuousClock()

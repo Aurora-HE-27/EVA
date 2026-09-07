@@ -19,6 +19,24 @@
       "revision": "863a1dfc07aae0fc11c40507ba1b5aa408abc808",
       "files": ["tokenizer.json"],
       "license": "MIT"
+    },
+    {
+      "role": "native-speech-experimental",
+      "repository": "openbmb/MiniCPM-o-4_5-gguf",
+      "revision": "db25077c33951fe163b42986fba0132e279872a2",
+      "files": [
+        "MiniCPM-o-4_5-Q4_K_M.gguf",
+        "audio/MiniCPM-o-4_5-audio-F16.gguf",
+        "vision/MiniCPM-o-4_5-vision-F16.gguf",
+        "tts/MiniCPM-o-4_5-projector-F16.gguf",
+        "tts/MiniCPM-o-4_5-tts-F16.gguf",
+        "token2wav-gguf/encoder.gguf",
+        "token2wav-gguf/flow_extra.gguf",
+        "token2wav-gguf/flow_matching.gguf",
+        "token2wav-gguf/hifigan2.gguf",
+        "token2wav-gguf/prompt_cache.gguf"
+      ],
+      "license": "Apache-2.0"
     }
   ]
 }

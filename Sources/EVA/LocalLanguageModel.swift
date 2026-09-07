@@ -16,6 +16,7 @@ final class LocalLanguageModel {
 
     private(set) var loadState: LoadState = .notLoaded
     private var session: ChatSession?
+    private var modelContainer: ModelContainer?
 
     func prepare(
         systemPrompt: String,
@@ -25,11 +26,17 @@ final class LocalLanguageModel {
 
         loadState = .loading
         do {
-            let modelDirectory = try ModelStorage.languageModelURL()
-            let container = try await LLMModelFactory.shared.loadContainer(
-                from: modelDirectory,
-                using: #huggingFaceTokenizerLoader()
-            )
+            let container: ModelContainer
+            if let modelContainer {
+                container = modelContainer
+            } else {
+                let modelDirectory = try ModelStorage.languageModelURL()
+                container = try await LLMModelFactory.shared.loadContainer(
+                    from: modelDirectory,
+                    using: #huggingFaceTokenizerLoader()
+                )
+                modelContainer = container
+            }
             let restoredHistory = history.compactMap(Self.modelMessage(from:))
             session = ChatSession(
                 container,
@@ -67,6 +74,12 @@ final class LocalLanguageModel {
 
     func resetConversation() async {
         await session?.clear()
+    }
+
+    /// Drop abandoned text from the KV cache without unloading model weights.
+    /// The next request restores only the conversation the user actually heard.
+    func invalidateConversation() {
+        session = nil
     }
 
     private static func modelMessage(from message: ChatMessage) -> Chat.Message? {

@@ -1,6 +1,6 @@
 # EVA for macOS
 
-EVA 是一个纯本地、以文字交流和语音回应为核心的个人 Mac 项目。用户只需打字，EVA 的回答会同时显示为消息并自动播放语音；模型、对话和构建产物都保存在项目目录中。
+EVA 是一个纯本地、以文字交流和语音回应为核心的个人 Mac 项目。用户只需打字，EVA 会先开口说话，再显示对应文字；模型、对话和构建产物都保存在项目目录中。
 
 > 项目状态：EVA 0.11.0 正在开发。当前版本先建立新的交互基线，后续将在相同接口下评估 MiniCPM-o 等原生语音模型。仓库保存可重构源码、固定依赖、公开模型清单和恢复脚本，不提交数 GB 的第三方权重。
 
@@ -8,7 +8,8 @@ EVA 是一个纯本地、以文字交流和语音回应为核心的个人 Mac �
 
 - SwiftUI 原生 macOS 文字聊天界面
 - 用户只使用文字输入，应用不申请麦克风或语音识别权限
-- EVA 的回复在生成时显示为消息，完成后自动播放连续语音
+- EVA 的新回复在真实开始播放音频后才显示字幕，避免产生“照着屏幕念”的感觉
+- 如果在开口前打断，未说出的回复不会残留在对话历史中
 - 任意一条 EVA 消息都可以重新播放，生成或播放过程可以立即停止
 - EVA 的姓名和身份固定，不再生成可替换的伴侣角色
 - Swift + MLX + Metal 运行 Qwen3.5 2B 4-bit 本地文字基线
@@ -36,7 +37,7 @@ EVA 是一个纯本地、以文字交流和语音回应为核心的个人 Mac �
 15GB 磁盘空间。克隆后运行：
 
 ```bash
-git clone https://github.com/Aurora-HE-27/EVA.git
+git clone --branch codex/text-voice-eva https://github.com/Aurora-HE-27/EVA.git
 cd EVA
 ./scripts/bootstrap.sh
 open dist/EVA.app
@@ -92,11 +93,23 @@ xcodebuild \
 julia Research/AffectiveDynamics/simulate.jl
 ```
 
+MiniCPM-o 4.5 原生语音实验与主程序隔离，不会替换当前可用版：
+
+```bash
+./scripts/setup_native_speech_lab.sh
+./scripts/download_native_speech_models.sh
+./scripts/benchmark_native_speech.sh
+```
+
+实验的设计、硬件边界和晋级门槛见 `Research/NativeSpeech/README.md`。它会额外下载约 8.9GB 权重，不是普通构建的必需步骤。
+当前开发版位于 `codex/text-voice-eva` 分支。原生语音实测结果见
+[M4 Pro 测试记录](Research/NativeSpeech/M4_PRO_RESULTS.md)；实验通过生成测试不代表已经通过自然度验收。
+
 ## 当前路线
 
 1. 已完成：固定 EVA 身份、纯文字输入、可见文字与自动语音回复
-2. 进行中：在 M4 Pro 24GB 上建立语音核心测试台和统一后端接口
-3. 计划中：对比当前级联基线与 MiniCPM-o 4.5 的中文、延迟和声音稳定性
+2. 已完成：在 M4 Pro 24GB 上跑通 MiniCPM-o 4.5 连续文字输入与语音生成，建立可重现测试台
+3. 下一步：扩大中文发音/情绪盲听对比，通过后再接入 App 的语音后端
 4. 计划中：在 RTX PRO 6000 上训练 EVA 专属人格与声音 Adapter
 5. 计划中：加入可审计的长期经历记忆和跨会话持续状态
 

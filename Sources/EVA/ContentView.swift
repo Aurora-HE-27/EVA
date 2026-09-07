@@ -66,7 +66,7 @@ struct ContentView: View {
 
             Spacer()
 
-            if appState.isGenerating || appState.speechOutput.isSpeaking {
+            if appState.conversationPhase != .ready {
                 Button {
                     appState.stopAll()
                 } label: {
@@ -102,7 +102,11 @@ struct ContentView: View {
                     ForEach(visibleMessages) { message in
                         MessageRow(
                             message: message,
-                            isSpeaking: appState.speakingMessageID == message.id,
+                            isSpeaking: appState.speakingMessageID == message.id
+                                && appState.conversationPhase == .speaking,
+                            isPreparingVoice: appState.speakingMessageID == message.id
+                                && appState.conversationPhase == .preparingVoice,
+                            isConcealed: appState.concealedAssistantMessageIDs.contains(message.id),
                             onReplay: { appState.replay(message) },
                             onStop: { appState.stopAll() }
                         )
@@ -129,6 +133,9 @@ struct ContentView: View {
             .onChange(of: appState.messages) { _, _ in
                 scrollToLatest(proxy, animated: true)
             }
+            .onChange(of: appState.concealedAssistantMessageIDs) { _, _ in
+                scrollToLatest(proxy, animated: true)
+            }
         }
     }
 
@@ -148,7 +155,7 @@ struct ContentView: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("你打字，EVA 会用文字和声音回复")
+            Text("你打字，EVA 先开口，再显示文字")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -191,6 +198,8 @@ struct ContentView: View {
 private struct MessageRow: View {
     let message: ChatMessage
     let isSpeaking: Bool
+    let isPreparingVoice: Bool
+    let isConcealed: Bool
     let onReplay: () -> Void
     let onStop: () -> Void
 
@@ -206,10 +215,10 @@ private struct MessageRow: View {
 
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
                 HStack(spacing: 6) {
-                    if message.content.isEmpty {
+                    if isConcealed || message.content.isEmpty {
                         ProgressView()
                             .controlSize(.small)
-                        Text("EVA 正在想…")
+                        Text(isSpeaking ? "EVA 已经开口…" : "EVA 正在准备回复…")
                             .foregroundStyle(.secondary)
                     } else {
                         Text(message.content)
@@ -227,11 +236,11 @@ private struct MessageRow: View {
                     in: RoundedRectangle(cornerRadius: 16, style: .continuous)
                 )
 
-                if message.role == .assistant, !message.content.isEmpty {
-                    Button(action: isSpeaking ? onStop : onReplay) {
+                if message.role == .assistant, !message.content.isEmpty, !isConcealed {
+                    Button(action: isSpeaking || isPreparingVoice ? onStop : onReplay) {
                         Label(
-                            isSpeaking ? "停止播放" : "再听一遍",
-                            systemImage: isSpeaking ? "stop.fill" : "speaker.wave.2.fill"
+                            isPreparingVoice ? "取消准备" : isSpeaking ? "停止播放" : "再听一遍",
+                            systemImage: isSpeaking || isPreparingVoice ? "stop.fill" : "speaker.wave.2.fill"
                         )
                         .font(.caption)
                     }
@@ -247,7 +256,9 @@ private struct MessageRow: View {
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            message.role == .user ? "你说：\(message.content)" : "EVA 说：\(message.content)"
+            message.role == .user
+                ? "你说：\(message.content)"
+                : isConcealed ? "EVA 正在准备回复" : "EVA 说：\(message.content)"
         )
     }
 

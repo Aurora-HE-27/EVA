@@ -1,0 +1,61 @@
+diff --git a/tools/omni/omni.cpp b/tools/omni/omni.cpp
+--- a/tools/omni/omni.cpp
++++ b/tools/omni/omni.cpp
+@@ -11103,6 +11103,14 @@ bool stream_decode(struct omni_context * ctx_omni, std::string debug_dir, int ro
+         }
+         // 🔧 使用总生成的 token 数量更新 il（用于和 max_tgt_len 比较）
+         il += total_tokens_generated;
++
++        // A length-limited simplex reply must flush TTS just like an EOS reply.
++        // Set this before enqueueing the last LLMOut so the audio tail is kept.
++        if (!ctx_omni->duplex_mode && il >= max_tgt_len && !llm_finish) {
++            llm_finish = true;
++            local_is_end_of_turn = true;
++            ctx_omni->llm_generation_done.store(true);
++        }
+         
+         // 🔧 [统一处理] 移除响应中的所有特殊结束 token
+         // 注意: <|speak|> 不是结束 token，而是开始说话的标记，应该被移除但不截断后面内容
+diff --git a/tools/server/server-omni.cpp b/tools/server/server-omni.cpp
+--- a/tools/server/server-omni.cpp
++++ b/tools/server/server-omni.cpp
+@@ -299,10 +299,25 @@ int main(int argc, char ** argv) {
+                     state.octx->text_streaming = true;
+                 }
+ 
+-                // start decode in background thread
++                // Report worker failure after join, and always wake the SSE reader.
++                std::string decode_error;
+                 std::thread worker([&](std::string dd, int ri) {
+                     std::lock_guard<std::mutex> lock(state.octx_mutex);
+-                    (void) stream_decode(state.octx, dd, ri);
++                    try {
++                        if (!stream_decode(state.octx, dd, ri)) {
++                            decode_error = "stream_decode failed";
++                        }
++                    } catch (const std::exception & e) {
++                        decode_error = std::string("stream_decode failed: ") + e.what();
++                    } catch (...) {
++                        decode_error = "stream_decode failed with an unknown exception";
++                    }
++                    {
++                        std::lock_guard<std::mutex> text_lock(state.octx->text_mtx);
++                        state.octx->text_done_flag = true;
++                        state.octx->text_streaming = false;
++                    }
++                    state.octx->text_cv.notify_all();
+                 }, debug_dir, round_idx);
+ 
+                 // poll text queue
+@@ -338,6 +353,11 @@ int main(int argc, char ** argv) {
+ 
+                 if (worker.joinable()) worker.join();
+ 
++                if (!decode_error.empty() &&
++                    !server_sent_event(sink, format_error_response(decode_error, "server_error"))) {
++                    return false;
++                }
++
+                 // send done
+                 static const std::string ev_done = "data: [DONE]\n\n";
+                 sink.write(ev_done.data(), ev_done.size());

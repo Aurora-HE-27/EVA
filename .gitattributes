@@ -1,0 +1,2 @@
+# Unified patches preserve upstream whitespace in their context lines.
+Research/NativeSpeech/*.patch -whitespace

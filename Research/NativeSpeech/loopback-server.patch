@@ -1,0 +1,45 @@
+diff --git a/tools/server/server-omni.cpp b/tools/server/server-omni.cpp
+index 851038a..127df7a 100644
+--- a/tools/server/server-omni.cpp
++++ b/tools/server/server-omni.cpp
+@@ -14,6 +14,8 @@
+ #include <thread>
+ #include <queue>
+ #include <condition_variable>
++#include <cerrno>
++#include <cstring>
+ #include <fstream>
+ #include <string>
+ 
+@@ -288,7 +290,7 @@ int main(int argc, char ** argv) {
+ 
+         // SSE streaming
+         res.set_chunked_content_provider("text/event-stream",
+-            [&](size_t, httplib::DataSink & sink) -> bool {
++            [&, debug_dir, round_idx](size_t, httplib::DataSink & sink) -> bool {
+                 // reset state
+                 {
+                     std::lock_guard<std::mutex> lock(state.octx->text_mtx);
+@@ -339,6 +341,7 @@ int main(int argc, char ** argv) {
+                 // send done
+                 static const std::string ev_done = "data: [DONE]\n\n";
+                 sink.write(ev_done.data(), ev_done.size());
++                sink.done();
+                 return true;
+             });
+     });
+@@ -411,7 +414,13 @@ int main(int argc, char ** argv) {
+     });
+ 
+     // start server
+-    svr.listen("0.0.0.0", params.port);
++    LOG_INF("Listening on %s:%d\n", params.hostname.c_str(), params.port);
++    if (!svr.listen(params.hostname, params.port)) {
++        LOG_ERR("Failed to listen on %s:%d: %s (errno=%d)\n",
++                params.hostname.c_str(), params.port, std::strerror(errno), errno);
++        llama_backend_free();
++        return 2;
++    }
+ 
+     // cleanup
+     {
