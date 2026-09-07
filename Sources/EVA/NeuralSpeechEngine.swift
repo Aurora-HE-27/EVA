@@ -25,11 +25,21 @@ enum NeuralSpeechError: LocalizedError {
 
 actor QwenSpeechEngine {
     private var model: Qwen3TTSModel?
+    private var preparation: Task<Qwen3TTSModel, Error>?
 
     func prepare() async throws {
         guard model == nil else { return }
-        let directory = try ModelStorage.speechModelURL()
-        model = try await Qwen3TTSModel.fromPretrained(directory.path)
+        if preparation == nil {
+            let directory = try ModelStorage.speechModelURL()
+            preparation = Task { try await Qwen3TTSModel.fromPretrained(directory.path) }
+        }
+        do {
+            model = try await preparation?.value
+            preparation = nil
+        } catch {
+            preparation = nil
+            throw error
+        }
     }
 
     func synthesize(
@@ -37,7 +47,9 @@ actor QwenSpeechEngine {
         speaker: String,
         instruction: String? = nil
     ) async throws -> NeuralSpeechAudio {
+        try Task.checkCancellation()
         try await prepare()
+        try Task.checkCancellation()
         guard let model else {
             throw NeuralSpeechError.engineCreationFailed
         }
@@ -50,20 +62,24 @@ actor QwenSpeechEngine {
             (0.74, 32, 0.92)
         ]
         for attempt in attempts {
-            let generated = try await model.generate(
+            // Synchronous generation stays on this actor's executor: a stopped
+            // request must unwind before another request can use the same model.
+            let generated = try model.generateCustomVoice(
                 text: text,
                 speaker: speaker,
-                instruct: instruction,
                 language: "chinese",
+                instruct: instruction,
                 temperature: attempt.temperature,
                 topK: attempt.topK,
                 topP: attempt.topP,
                 repetitionPenalty: 1.05,
-                maxTokens: 2_048
+                maxTokens: 2_048,
+                cancellationCheck: { try Task.checkCancellation() }
             )
             let safeSamples = generated.asArray(Float.self).map {
                 $0.isFinite ? min(max($0, -1), 1) : 0
             }
+            try Task.checkCancellation()
             if Self.isUsable(samples: safeSamples, sampleRate: model.sampleRate, text: text) {
                 Memory.clearCache()
                 return NeuralSpeechAudio(samples: safeSamples, sampleRate: model.sampleRate)
@@ -75,6 +91,8 @@ actor QwenSpeechEngine {
 
     func release() {
         model = nil
+        preparation?.cancel()
+        preparation = nil
         Memory.clearCache()
     }
 

@@ -4,9 +4,12 @@ import Foundation
 @MainActor
 final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     @Published private(set) var isSpeaking = false
+    @Published private(set) var isBusy = false
 
     var onSpeakingChanged: ((Bool) -> Void)?
-    var onFailure: ((String) -> Void)?
+    var onSegmentStarted: ((UUID, Int, String) -> Void)?
+    var onFinished: ((UUID) -> Void)?
+    var onFailure: ((UUID, String) -> Void)?
 
     static let retiredMLXVoiceIdentifier = "eva.qwen3.voice-design"
     static let retiredKokoroVoiceIdentifiers: Set<String> = [
@@ -25,24 +28,29 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         (neuralMasculineVoiceIdentifier, "Dylan · 年轻男声")
     ]
 
-    private struct SpeechItem {
+    private struct SystemItem {
+        let requestID: UUID
+        let index: Int
         let text: String
-        let voiceIdentifier: String
-        let rate: Double
-        let emotion: EmotionDirective
     }
 
     private let synthesizer = AVSpeechSynthesizer()
     private let neuralEngine = QwenSpeechEngine()
-    private var neuralQueue: [SpeechItem] = []
+    private let player = BufferedSpeechPlayer()
     private var neuralTask: Task<Void, Never>?
-    private var neuralTaskID: UUID?
-    private var audioPlayer: AVAudioPlayer?
-    private var activeSystemUtterances: Set<ObjectIdentifier> = []
+    private var stoppedSynthesis: Task<Void, Never>?
+    private var activeRequestID: UUID?
+    private var activeSystemUtterances: [ObjectIdentifier: SystemItem] = [:]
 
     override init() {
         super.init()
         synthesizer.delegate = self
+        player.onSegmentStarted = { [weak self] id, index, text in
+            guard let self, self.activeRequestID == id else { return }
+            self.onSegmentStarted?(id, index, text)
+        }
+        player.onPlayingChanged = { [weak self] value in self?.setSpeaking(value) }
+        player.onFinished = { [weak self] id in self?.finish(id) }
     }
 
     static var availableVoices: [AVSpeechSynthesisVoice] {
@@ -75,149 +83,147 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         return neuralVoiceOptions.contains { $0.identifier == identifier }
     }
 
-    func prepareNeuralVoice() {
-        _ = try? ModelStorage.speechModelURL()
+    func prepareNeuralVoice() async throws {
+        try await neuralEngine.prepare()
     }
 
     func enqueue(
         _ text: String,
+        requestID: UUID = UUID(),
         voiceIdentifier: String?,
         rate: Double = 0.48,
         pitch: Double = 1.02,
         emotion: EmotionDirective = .neutral
     ) {
-        let cleanText = SpokenTextNormalizer.normalize(text)
-        guard !cleanText.isEmpty else {
-            onFailure?("这条回复没有可以播放的内容。")
+        enqueue(
+            segments: Self.spokenSegments(for: text),
+            requestID: requestID,
+            voiceIdentifier: voiceIdentifier,
+            rate: rate,
+            pitch: pitch,
+            emotion: emotion
+        )
+    }
+
+    static func spokenSegments(for text: String) -> [String] {
+        SpokenReplySegmenter.segments(for: SpokenTextNormalizer.normalize(text))
+    }
+
+    /// Accepts the same immutable plan used by the transcript. Never normalize
+    /// again here: a second cleanup pass could change what the subtitles say.
+    func enqueue(
+        segments: [String],
+        requestID: UUID,
+        voiceIdentifier: String?,
+        rate: Double = 0.48,
+        pitch: Double = 1.02,
+        emotion: EmotionDirective = .neutral
+    ) {
+        stop()
+        activeRequestID = requestID
+        isBusy = true
+        guard !segments.isEmpty, segments.allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+            fail(requestID, description: "这条回复没有可以播放的内容。")
             return
         }
 
         if Self.isNeuralVoiceIdentifier(voiceIdentifier) {
-            neuralQueue.append(
-                SpeechItem(
-                    text: cleanText,
-                    voiceIdentifier: voiceIdentifier ?? Self.neuralFeminineVoiceIdentifier,
-                    rate: rate,
-                    emotion: emotion
-                )
-            )
-            beginNeuralProcessingIfNeeded()
+            player.begin(requestID)
+            neuralTask = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    for (index, segment) in segments.enumerated() {
+                        try Task.checkCancellation()
+                        guard activeRequestID == requestID else { throw CancellationError() }
+                        let audio = try await neuralEngine.synthesize(
+                            text: segment,
+                            speaker: Self.speakerName(for: voiceIdentifier ?? Self.neuralFeminineVoiceIdentifier),
+                            instruction: nil
+                        )
+                        try Task.checkCancellation()
+                        guard activeRequestID == requestID else { throw CancellationError() }
+                        try player.append(audio, index: index, text: segment, requestID: requestID)
+                        // The next synthesis runs while the audio node plays this
+                        // segment. One actor serializes model access across stops.
+                    }
+                    guard activeRequestID == requestID else { return }
+                    neuralTask = nil
+                    player.finishScheduling(requestID: requestID)
+                } catch is CancellationError {
+                    // stop() owns cleanup; an old task must not clear a new reply.
+                } catch {
+                    guard activeRequestID == requestID else { return }
+                    fail(requestID, description: "本地神经语音暂时无法播放，请重试。没有切换成系统朗读声。\n\(error.localizedDescription)")
+                }
+            }
             return
         }
 
         let adjustment = Self.voiceAdjustment(for: emotion)
-        let utterance = AVSpeechUtterance(string: cleanText)
         let resolvedIdentifier = voiceIdentifier == Self.retiredMLXVoiceIdentifier
             ? Self.systemFallbackVoiceIdentifier
             : voiceIdentifier
-        utterance.voice = resolvedIdentifier.flatMap(AVSpeechSynthesisVoice.init(identifier:))
+        let systemVoice = resolvedIdentifier.flatMap(AVSpeechSynthesisVoice.init(identifier:))
             ?? AVSpeechSynthesisVoice(identifier: Self.systemFallbackVoiceIdentifier)
             ?? AVSpeechSynthesisVoice(language: "zh-CN")
-        utterance.rate = Float(min(max(rate * adjustment.rate, 0.35), 0.62))
-        utterance.pitchMultiplier = Float(min(max(pitch * adjustment.pitch, 0.92), 1.08))
-        utterance.volume = Float(adjustment.volume)
-        utterance.preUtteranceDelay = adjustment.preDelay
-        utterance.postUtteranceDelay = adjustment.postDelay
-        speakSystemUtterance(utterance)
+        guard let systemVoice else {
+            fail(requestID, description: "EVA 暂时无法发声，请检查声音设置后重试。")
+            return
+        }
+        for (index, segment) in segments.enumerated() {
+            let utterance = AVSpeechUtterance(string: segment)
+            utterance.voice = systemVoice
+            utterance.rate = Float(min(max(rate * adjustment.rate, 0.35), 0.62))
+            utterance.pitchMultiplier = Float(min(max(pitch * adjustment.pitch, 0.92), 1.08))
+            utterance.volume = Float(adjustment.volume)
+            activeSystemUtterances[ObjectIdentifier(utterance)] = SystemItem(requestID: requestID, index: index, text: segment)
+            synthesizer.speak(utterance)
+        }
     }
 
     func stop() {
+        activeRequestID = nil
+        if let neuralTask {
+            let previous = stoppedSynthesis
+            // Rapid stop / replay / stop can cancel a new task before it ever
+            // enters the model actor. Do not lose the older in-flight GPU work.
+            stoppedSynthesis = Task {
+                await previous?.value
+                await neuralTask.value
+            }
+        }
         neuralTask?.cancel()
         neuralTask = nil
-        neuralTaskID = nil
-        neuralQueue.removeAll()
-        audioPlayer?.stop()
-        audioPlayer = nil
+        player.stop()
         activeSystemUtterances.removeAll()
         synthesizer.stopSpeaking(at: .immediate)
+        isBusy = false
         setSpeaking(false)
     }
 
     func shutdown() {
         stop()
+        Task { await neuralEngine.release() }
     }
 
-    private func beginNeuralProcessingIfNeeded() {
-        guard neuralTask == nil else { return }
-        let taskID = UUID()
-        neuralTaskID = taskID
-        neuralTask = Task { [weak self] in
-            await self?.processNeuralQueue(taskID: taskID)
-        }
+    func waitForStoppedSynthesis() async {
+        await stoppedSynthesis?.value
     }
 
-    private func processNeuralQueue(taskID: UUID) async {
-        defer {
-            // A cancelled synthesis may unwind after the next reply has begun.
-            // Only its current owner can clear the player's state.
-            if neuralTaskID == taskID {
-                neuralTask = nil
-                neuralTaskID = nil
-                audioPlayer = nil
-                if activeSystemUtterances.isEmpty {
-                    setSpeaking(false)
-                }
-            }
-        }
-
-        while !neuralQueue.isEmpty, !Task.isCancelled, neuralTaskID == taskID {
-            let item = neuralQueue.removeFirst()
-            do {
-                let audio = try await neuralEngine.synthesize(
-                    text: item.text,
-                    speaker: Self.speakerName(for: item.voiceIdentifier),
-                    // Let the speaker model infer understated prosody from the
-                    // sentence itself. Repeating an emotion/style direction on
-                    // every turn produces the uncanny "performed" delivery that
-                    // is especially noticeable in intimate conversation.
-                    instruction: nil
-                )
-                guard !Task.isCancelled, neuralTaskID == taskID else { break }
-                let player = try AVAudioPlayer(data: WaveEncoder.pcm16Data(from: audio))
-                audioPlayer = player
-                player.prepareToPlay()
-                guard player.play() else {
-                    throw SpeechOutputError.playbackFailed
-                }
-                setSpeaking(true)
-                while player.isPlaying, !Task.isCancelled {
-                    try await Task.sleep(for: .milliseconds(40))
-                }
-                if !synthesizer.isSpeaking {
-                    setSpeaking(false)
-                }
-            } catch is CancellationError {
-                break
-            } catch {
-                guard !Task.isCancelled, neuralTaskID == taskID else { break }
-                speakWithSystemFallback(item)
-            }
-        }
-        if neuralTaskID == taskID {
-            await neuralEngine.release()
-        }
+    private func finish(_ id: UUID) {
+        guard activeRequestID == id else { return }
+        activeRequestID = nil
+        neuralTask = nil
+        isBusy = false
+        setSpeaking(false)
+        // Keep weights resident. Clearing the model here made every turn cold.
+        onFinished?(id)
     }
 
-    private func speakWithSystemFallback(_ item: SpeechItem) {
-        let adjustment = Self.voiceAdjustment(for: item.emotion)
-        let utterance = AVSpeechUtterance(string: item.text)
-        utterance.voice = AVSpeechSynthesisVoice(identifier: Self.systemFallbackVoiceIdentifier)
-            ?? AVSpeechSynthesisVoice(language: "zh-CN")
-        utterance.rate = Float(min(max(item.rate * adjustment.rate, 0.35), 0.58))
-        utterance.pitchMultiplier = Float(adjustment.pitch)
-        utterance.volume = Float(adjustment.volume)
-        utterance.preUtteranceDelay = adjustment.preDelay
-        utterance.postUtteranceDelay = adjustment.postDelay
-        speakSystemUtterance(utterance)
-    }
-
-    private func speakSystemUtterance(_ utterance: AVSpeechUtterance) {
-        guard utterance.voice != nil else {
-            onFailure?("EVA 暂时无法发声，请检查声音设置后重试。")
-            return
-        }
-        activeSystemUtterances.insert(ObjectIdentifier(utterance))
-        synthesizer.speak(utterance)
+    private func fail(_ id: UUID, description: String) {
+        guard activeRequestID == id else { return }
+        stop()
+        onFailure?(id, description)
     }
 
     private static func speakerName(for identifier: String) -> String {
@@ -257,7 +263,9 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         didStart utterance: AVSpeechUtterance
     ) {
         Task { @MainActor in
-            guard activeSystemUtterances.contains(ObjectIdentifier(utterance)) else { return }
+            guard let item = activeSystemUtterances[ObjectIdentifier(utterance)],
+                  activeRequestID == item.requestID else { return }
+            onSegmentStarted?(item.requestID, item.index, item.text)
             setSpeaking(true)
         }
     }
@@ -267,10 +275,9 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         didFinish utterance: AVSpeechUtterance
     ) {
         Task { @MainActor in
-            guard activeSystemUtterances.remove(ObjectIdentifier(utterance)) != nil else { return }
-            if activeSystemUtterances.isEmpty, audioPlayer?.isPlaying != true {
-                setSpeaking(false)
-            }
+            guard let item = activeSystemUtterances.removeValue(forKey: ObjectIdentifier(utterance)),
+                  activeRequestID == item.requestID else { return }
+            if activeSystemUtterances.isEmpty { finish(item.requestID) }
         }
     }
 
@@ -279,11 +286,9 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         didCancel utterance: AVSpeechUtterance
     ) {
         Task { @MainActor in
-            guard activeSystemUtterances.remove(ObjectIdentifier(utterance)) != nil else { return }
-            if activeSystemUtterances.isEmpty, audioPlayer?.isPlaying != true {
-                setSpeaking(false)
-                onFailure?("语音播放中断，请再试一次。")
-            }
+            guard let item = activeSystemUtterances.removeValue(forKey: ObjectIdentifier(utterance)),
+                  activeRequestID == item.requestID else { return }
+            fail(item.requestID, description: "语音播放中断，请再试一次。")
         }
     }
 
@@ -291,13 +296,5 @@ final class SpeechOutputService: NSObject, ObservableObject, AVSpeechSynthesizer
         guard isSpeaking != value else { return }
         isSpeaking = value
         onSpeakingChanged?(value)
-    }
-}
-
-private enum SpeechOutputError: LocalizedError {
-    case playbackFailed
-
-    var errorDescription: String? {
-        "EVA 的语音播放失败。"
     }
 }

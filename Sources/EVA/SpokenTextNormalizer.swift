@@ -12,7 +12,6 @@ enum SpokenTextNormalizer {
             with: "$1"
         )
         text = replacing(#"https?://\S+"#, in: text, with: "")
-        text = replacing(stageDirectionPattern, in: text, with: "")
         text = String(text.filter { !isEmoji($0) })
         text = text.replacingOccurrences(of: "```", with: "")
         text = text.replacingOccurrences(
@@ -20,6 +19,9 @@ enum SpokenTextNormalizer {
             with: "",
             options: .regularExpression
         )
+        // Emoji and Markdown can wrap an otherwise recognizable action label.
+        // Clean those decorations first so one pass removes the whole label.
+        text = replacing(stageDirectionPattern, in: text, with: "")
         text = replacing(#"[ \t]+"#, in: text, with: " ")
         text = replacing(#"\s*\n+\s*"#, in: text, with: "。")
         text = replacing(#"([。！？？，、])\1+"#, in: text, with: "$1")

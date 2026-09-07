@@ -14,6 +14,7 @@ app_source="$derived_data/Build/Products/Release/EVA.app"
 app_destination="$project_dir/dist/EVA.app"
 created_link=0
 created_speech_link=0
+package_staging=""
 
 if [[ ! -f "$model_source/config.json" || ! -f "$speech_model_source/model.safetensors" || ! -f "$speech_model_source/speech_tokenizer/model.safetensors" ]]; then
     if [[ -n "${EVA_MODEL_SOURCE:-}" || -n "${EVA_SPEECH_MODEL_SOURCE:-}" ]]; then
@@ -52,6 +53,12 @@ else
 fi
 
 cleanup() {
+    if [[ -n "$package_staging" && "$package_staging" == "$project_dir/dist/.eva-package."* && -d "$package_staging" ]]; then
+        if [[ -d "$package_staging/previous.app" && ! -e "$app_destination" ]]; then
+            mv "$package_staging/previous.app" "$app_destination"
+        fi
+        rm -rf "$package_staging"
+    fi
     if [[ "$created_link" == "1" && -L "$model_link" ]]; then
         unlink "$model_link"
     fi
@@ -79,16 +86,28 @@ xcodebuild \
     ONLY_ACTIVE_ARCH=YES \
     build
 
-if [[ -e "$app_destination" ]]; then
-    rm -rf "$app_destination"
-fi
 mkdir -p "$project_dir/dist"
-ditto "$app_source" "$app_destination"
+package_staging="$(mktemp -d "$project_dir/dist/.eva-package.XXXXXX")"
+staged_app="$package_staging/EVA.app"
+ditto "$app_source" "$staged_app"
+# Xcode's shared build directory may retain unit-test injection artifacts after
+# `test`. They are not part of EVA and must not ship in the standalone app.
+rm -rf "$staged_app/Contents/PlugIns/EVATests.xctest" "$staged_app/Contents/PlugIns/EVATests.xctest.dSYM"
+for test_artifact in Testing.framework XCTAutomationSupport.framework XCTest.framework XCTestCore.framework XCTestSupport.framework XCUIAutomation.framework XCUnit.framework libXCTestBundleInject.dylib libXCTestSwiftSupport.dylib; do
+    rm -rf "$staged_app/Contents/Frameworks/$test_artifact"
+done
 /usr/bin/codesign \
     --force \
     --deep \
     --sign - \
     --entitlements "$project_dir/Resources/EVA.entitlements" \
-    "$app_destination"
-/usr/bin/codesign --verify --deep --strict "$app_destination"
+    "$staged_app"
+/usr/bin/codesign --verify --deep --strict "$staged_app"
+
+# Do not remove the usable app until its replacement has built and verified.
+# The exit trap restores it if the final move fails, then removes temporary files.
+if [[ -e "$app_destination" ]]; then
+    mv "$app_destination" "$package_staging/previous.app"
+fi
+mv "$staged_app" "$app_destination"
 echo "$app_destination"

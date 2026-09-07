@@ -58,10 +58,10 @@ targets:
     settings:
       base:
         CODE_SIGN_ENTITLEMENTS: Resources/EVA.entitlements
-        CURRENT_PROJECT_VERSION: 17
+        CURRENT_PROJECT_VERSION: 18
         ENABLE_APP_SANDBOX: YES
         INFOPLIST_FILE: Resources/Info.plist
-        MARKETING_VERSION: 0.11.0
+        MARKETING_VERSION: 0.12.0
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
         OTHER_LDFLAGS: "$(inherited) -lc++"
         PRODUCT_BUNDLE_IDENTIFIER: com.aurorahe27.eva

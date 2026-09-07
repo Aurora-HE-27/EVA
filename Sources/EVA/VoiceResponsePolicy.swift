@@ -1,9 +1,9 @@
 import Foundation
 
 enum VoiceResponsePolicy {
-    /// Produces exactly one complete utterance for one assistant turn.
-    /// Punctuation remains inside the utterance as prosody context; callers must not
-    /// split the result into independently synthesized sentences.
+    /// Produces a complete, speakable reply. Short turns retain their full prosody
+    /// context; SpokenReplySegmenter may split longer turns at complete sentences,
+    /// never at commas or individual language-model tokens.
     static func continuousUtterance(
         generatedText: String,
         fallback: String,

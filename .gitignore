@@ -9,6 +9,7 @@ EVA.xcodeproj/
 .eva-data/
 .eva-runtime/
 Artifacts/NativeSpeech/
+Artifacts/*.log
 Research/NativeSpeech/__pycache__/
 Resources/Models/*
 !Resources/Models/.gitkeep

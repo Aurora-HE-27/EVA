@@ -30,7 +30,9 @@ final class AppState: ObservableObject {
     private var currentVoiceState: EmotionDirective = .neutral
     private var responseTask: Task<Void, Never>?
     private var activeResponseID: UUID?
-    private var transcriptRevealTask: Task<Void, Never>?
+    private var activeSpeechRequestID: UUID?
+    private var transcriptRevealTasks: [Int: Task<Void, Never>] = [:]
+    private var speechCompletionTask: Task<Void, Never>?
     private var persistenceTask: Task<Void, Never>?
 
     var concealedAssistantMessageIDs: Set<UUID> { transcriptState.concealedIDs }
@@ -48,7 +50,7 @@ final class AppState: ObservableObject {
     像朋友聊天：先对具体事情产生反应，再决定是否补充看法。用户问问题就直接回答；分享好事可以一起高兴；吐槽时可以接话或轻微调侃；难过时可以安静、心疼或替用户不平。不要套用“复述感受、分析原因、提出建议、最后追问”的咨询流程。
     不必每轮提问、总结或者给建议。允许有温和但明确的不同意见，也允许短暂迟疑、不确定或者暂时无话可说。避免“谢谢你愿意告诉我”“听起来你……”“我能理解你的感受”等咨询式套话。
     跟随用户的语气和长度。简单闲聊通常只说一到三句；一句自然反应已经足够时就停下。只有用户明确要求解释时才展开。
-    回复会同时显示成文字并由语音读出。请使用适合直接说出口的简体中文，把一轮回复组织成连贯口语。不要使用列表、标题、网址、Markdown、Emoji、颜文字、括号动作、表情标签或声音控制指令。
+    你的回复首先是说给用户听的话，字幕会在开口后出现。请使用适合直接说出口的简体中文，把一轮回复组织成连贯口语，不要写成文章或播音稿。不要使用列表、标题、网址、Markdown、Emoji、颜文字、括号动作、表情标签或声音控制指令。
     只能依据用户明确提供的事实和已有记忆作答。不要编造天气、时间、环境、共同经历或第三方动机，也不要声称看见用户的表情和身体。
     你可以在意用户，但不得因用户离开、沉默或与真人交往而责怪、嫉妒、威胁或制造愧疚，也不得鼓励用户依赖 EVA 或疏远现实关系。
     用户表达自伤、自杀或即时危险时，暂停普通玩笑，温和而明确地鼓励其立即联系身边可信任的人、当地紧急服务或专业危机支持，并确认其当下是否安全。
@@ -57,6 +59,7 @@ final class AppState: ObservableObject {
     }
 
     init() {
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return }
         _ = ProjectAccessCoordinator.shared
         if let savedProfile = profileStore.load() {
             profile = .eva(userName: savedProfile.sanitizedUserName)
@@ -90,25 +93,33 @@ final class AppState: ObservableObject {
         }
 
         speechOutput.onSpeakingChanged = { [weak self] isSpeaking in
-            guard let self else { return }
-            if isSpeaking {
-                conversationPhase = .speaking
-                guard let messageID = speakingMessageID else { return }
-                transcriptState.playbackStarted(messageID)
-                persistConversation()
-                scheduleTranscriptReveal(for: messageID)
-            } else if !isGenerating {
-                transcriptRevealTask?.cancel()
-                transcriptRevealTask = nil
-                if let messageID = speakingMessageID {
-                    finishTranscript(for: messageID)
-                }
-                conversationPhase = .ready
+            guard let self, activeSpeechRequestID != nil else { return }
+            // A buffer underrun is not the end of a reply.
+            conversationPhase = isSpeaking ? .speaking : .preparingVoice
+        }
+        speechOutput.onSegmentStarted = { [weak self] requestID, segmentIndex, _ in
+            guard let self, activeSpeechRequestID == requestID,
+                  let messageID = speakingMessageID,
+                  transcriptState.playbackStarted(messageID, segmentIndex: segmentIndex) else { return }
+            persistConversation()
+            scheduleTranscriptReveal(for: messageID, segmentIndex: segmentIndex, requestID: requestID)
+        }
+        speechOutput.onFinished = { [weak self] requestID in
+            guard let self, activeSpeechRequestID == requestID else { return }
+            let pendingReveals = Array(transcriptRevealTasks.values)
+            speechCompletionTask = Task { [weak self] in
+                for task in pendingReveals { await task.value }
+                guard !Task.isCancelled, let self, activeSpeechRequestID == requestID else { return }
+                if let messageID = speakingMessageID { finishTranscript(for: messageID) }
+                activeSpeechRequestID = nil
                 speakingMessageID = nil
+                transcriptRevealTasks.removeAll()
+                conversationPhase = .ready
+                speechCompletionTask = nil
             }
         }
-        speechOutput.onFailure = { [weak self] description in
-            guard let self else { return }
+        speechOutput.onFailure = { [weak self] requestID, description in
+            guard let self, activeSpeechRequestID == requestID else { return }
             stopAll()
             errorMessage = description
         }
@@ -131,10 +142,10 @@ final class AppState: ObservableObject {
                 systemPrompt: activeSystemPrompt,
                 history: modelHistory
             )
+            let voiceError = await prepareSpeechIfNeeded()
             isLocalModelReady = true
             connectionStatus = "本地运行 · 完全离线"
-            errorMessage = nil
-            speechOutput.prepareNeuralVoice()
+            errorMessage = voiceError
         } catch {
             isLocalModelReady = false
             connectionStatus = "本地模型未就绪"
@@ -181,6 +192,9 @@ final class AppState: ObservableObject {
             do {
                 try Task.checkCancellation()
                 guard activeResponseID == assistantID else { throw CancellationError() }
+                await speechOutput.waitForStoppedSynthesis()
+                try Task.checkCancellation()
+                guard activeResponseID == assistantID else { throw CancellationError() }
                 var emotionParser = EmotionStreamParser()
                 var responseText = ""
                 let stream = try await languageModel.streamResponse(
@@ -193,7 +207,6 @@ final class AppState: ObservableObject {
                     try Task.checkCancellation()
                     guard activeResponseID == assistantID else { throw CancellationError() }
                     responseText += emotionParser.append(token)
-                    setContent(responseText, for: assistantID)
                 }
 
                 if let trailingText = emotionParser.flush() {
@@ -207,18 +220,25 @@ final class AppState: ObservableObject {
                 )
                 guard activeResponseID == assistantID else { throw CancellationError() }
 
-                setContent(finalResponse, for: assistantID)
+                let segments = SpeechOutputService.spokenSegments(for: finalResponse)
+                transcriptState.plan(segments, for: assistantID)
                 isGenerating = false
                 conversationPhase = .preparingVoice
                 speakingMessageID = assistantID
+                let speechRequestID = UUID()
+                activeSpeechRequestID = speechRequestID
+                activeResponseID = nil
+                // Keep weights, but discard drafts/normalization artifacts from
+                // the session. The next turn restores only heard conversation.
+                languageModel.invalidateConversation()
                 speechOutput.enqueue(
-                    finalResponse,
+                    segments: segments,
+                    requestID: speechRequestID,
                     voiceIdentifier: voice,
                     rate: rate,
                     pitch: pitch,
                     emotion: voiceState
                 )
-                activeResponseID = nil
                 persistConversation()
             } catch is CancellationError {
                 if activeResponseID == assistantID {
@@ -246,9 +266,12 @@ final class AppState: ObservableObject {
         guard message.role == .assistant, !message.content.isEmpty else { return }
         stopAll()
         speakingMessageID = message.id
+        let requestID = UUID()
+        activeSpeechRequestID = requestID
         conversationPhase = .preparingVoice
         speechOutput.enqueue(
             message.content,
+            requestID: requestID,
             voiceIdentifier: selectedVoiceIdentifier.isEmpty ? nil : selectedVoiceIdentifier,
             rate: voiceRate,
             pitch: voicePitch,
@@ -260,14 +283,18 @@ final class AppState: ObservableObject {
         let interruptedMessageID = speakingMessageID ?? activeResponseID
 
         activeResponseID = nil
+        activeSpeechRequestID = nil
         responseTask?.cancel()
         responseTask = nil
-        transcriptRevealTask?.cancel()
-        transcriptRevealTask = nil
+        for task in transcriptRevealTasks.values { task.cancel() }
+        transcriptRevealTasks.removeAll()
+        speechCompletionTask?.cancel()
+        speechCompletionTask = nil
         isGenerating = false
         speakingMessageID = nil
         conversationPhase = .ready
         speechOutput.stop()
+        languageModel.invalidateConversation()
 
         if let interruptedMessageID {
             finishTranscript(for: interruptedMessageID)
@@ -329,10 +356,10 @@ final class AppState: ObservableObject {
         connectionStatus = "正在加载本地模型…"
         do {
             try await languageModel.prepare(systemPrompt: activeSystemPrompt, history: [])
+            let voiceError = await prepareSpeechIfNeeded()
             isLocalModelReady = true
             connectionStatus = "本地运行 · 完全离线"
-            errorMessage = nil
-            speechOutput.prepareNeuralVoice()
+            errorMessage = voiceError
         } catch {
             isLocalModelReady = false
             connectionStatus = "本地模型未就绪"
@@ -356,9 +383,12 @@ final class AppState: ObservableObject {
 
     func previewVoice() {
         stopAll()
+        let requestID = UUID()
+        activeSpeechRequestID = requestID
         conversationPhase = .preparingVoice
         speechOutput.enqueue(
             "晚上好，我是 EVA。以后你打字给我，我会直接说给你听。",
+            requestID: requestID,
             voiceIdentifier: selectedVoiceIdentifier.isEmpty ? nil : selectedVoiceIdentifier,
             rate: voiceRate,
             pitch: voicePitch,
@@ -370,9 +400,23 @@ final class AppState: ObservableObject {
         isLocalModelReady
     }
 
+    private func prepareSpeechIfNeeded() async -> String? {
+        guard SpeechOutputService.isNeuralVoiceIdentifier(selectedVoiceIdentifier) else { return nil }
+        connectionStatus = "正在准备本地语音…"
+        do {
+            try await speechOutput.prepareNeuralVoice()
+            return nil
+        } catch {
+            // A voice-load failure must not permanently disable the ready text
+            // model. The next synthesis can retry, or the user can select a
+            // system voice explicitly without having to restart the app.
+            return "本地文字模型已就绪，语音暂未加载成功，可重试或在设置中选择声音。\n\(error.localizedDescription)"
+        }
+    }
+
     private var modelHistory: [ChatMessage] {
         guard messages.contains(where: { $0.role == .user }) else { return [] }
-        return Array(messages.filter { !$0.content.isEmpty }.suffix(32))
+        return Array(transcriptState.restorableMessages(messages).filter { !$0.content.isEmpty }.suffix(32))
     }
 
     private var activeSystemPrompt: String {
@@ -399,6 +443,9 @@ final class AppState: ObservableObject {
     }
 
     private func finishTranscript(for id: UUID) {
+        if let heard = transcriptState.heardContent(for: id) {
+            setContent(heard, for: id)
+        }
         if transcriptState.finish(id) {
             messages.removeAll { $0.id == id }
             languageModel.invalidateConversation()
@@ -415,15 +462,15 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func scheduleTranscriptReveal(for messageID: UUID) {
-        transcriptRevealTask?.cancel()
-        transcriptRevealTask = Task { [weak self] in
+    private func scheduleTranscriptReveal(for messageID: UUID, segmentIndex: Int, requestID: UUID) {
+        guard transcriptRevealTasks[segmentIndex] == nil else { return }
+        transcriptRevealTasks[segmentIndex] = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(450))
             guard !Task.isCancelled, let self else { return }
-            guard speakingMessageID == messageID,
-                  speechOutput.isSpeaking else { return }
-            transcriptState.reveal(messageID)
-            transcriptRevealTask = nil
+            guard activeSpeechRequestID == requestID, speakingMessageID == messageID else { return }
+            if let content = transcriptState.reveal(messageID, through: segmentIndex) {
+                setContent(content, for: messageID)
+            }
         }
     }
 

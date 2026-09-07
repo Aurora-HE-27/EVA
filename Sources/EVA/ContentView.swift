@@ -40,12 +40,12 @@ struct ContentView: View {
                             endPoint: .bottomTrailing
                         )
                     )
-                Image(systemName: appState.speechOutput.isSpeaking ? "waveform" : "ellipsis.message.fill")
+                Image(systemName: appState.conversationPhase == .speaking ? "waveform" : "ellipsis.message.fill")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.white)
                     .symbolEffect(
                         .variableColor.iterative,
-                        isActive: appState.speechOutput.isSpeaking
+                        isActive: appState.conversationPhase == .speaking
                     )
             }
             .frame(width: 40, height: 40)
@@ -187,7 +187,7 @@ struct ContentView: View {
                     appState.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     || !appState.isLocalModelReady
                 )
-                .help(appState.isGenerating || appState.speechOutput.isSpeaking ? "打断当前回复并发送" : "发送")
+                .help(appState.conversationPhase != .ready ? "打断当前回复并发送" : "发送")
             }
         }
         .padding(18)

@@ -17,7 +17,11 @@ struct EVAApp: App {
                 .environmentObject(appState)
                 .frame(minWidth: 920, minHeight: 620)
                 .task {
-                    await appState.start()
+                    // Unit tests own model loading and fixtures; the test host
+                    // must not concurrently load the user's live conversation.
+                    if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+                        await appState.start()
+                    }
                 }
                 .onReceive(
                     NotificationCenter.default.publisher(

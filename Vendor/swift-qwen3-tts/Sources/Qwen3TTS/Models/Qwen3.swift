@@ -594,8 +594,10 @@ public class Qwen3TTSModel: Module {
         topP: Float = 1.0,
         repetitionPenalty: Float = 1.05,
         maxTokens: Int = 2048,
-        onToken: ((Int) -> Void)? = nil
+        onToken: ((Int) -> Void)? = nil,
+        cancellationCheck: (() throws -> Void)? = nil
     ) throws -> MLXArray {
+        try cancellationCheck?()
         guard let talkerConfig = config.talkerConfig else {
             throw Qwen3TTSError.modelNotInitialized("Talker config not available")
         }
@@ -639,9 +641,11 @@ public class Qwen3TTSModel: Module {
 
         // Autoregressive generation
         for _ in 0..<effectiveMaxTokens {
+            try cancellationCheck?()
             // Forward through Talker
             let (logits, hiddenStates) = talker(currentInput, cache: cache)
             eval(logits, hiddenStates)
+            try cancellationCheck?()
 
             // Sample first codebook token
             let nextToken = sampleToken(
@@ -673,6 +677,7 @@ public class Qwen3TTSModel: Module {
                 let codePredictorCache = codePredictor.makeCache()
 
                 for codeIdx in 0..<15 {
+                    try cancellationCheck?()
                     // Prepare input
                     let codeInput: MLXArray
                     if codeIdx == 0 {
@@ -693,6 +698,7 @@ public class Qwen3TTSModel: Module {
                         generationStep: codeIdx
                     )
                     eval(codeLogits)
+                    try cancellationCheck?()
 
                     // Sample
                     let nextCode = sampleToken(
@@ -742,6 +748,7 @@ public class Qwen3TTSModel: Module {
         let codes = MLX.stacked(codesArray, axis: 1)  // [1, seq_len, 16]
 
         // Decode to audio
+        try cancellationCheck?()
         let (audio, audioLengths) = speechTokenizer!.decode(codes)
 
         // Trim to valid length
@@ -752,6 +759,12 @@ public class Qwen3TTSModel: Module {
             audioTrimmed = audioTrimmed[0..<validLen]
         }
 
+        // MLX is lazy: synchronize before the final check so cancellation during
+        // waveform decoding cannot hand an obsolete reply back to the player.
+        if let cancellationCheck {
+            eval(audioTrimmed)
+            try cancellationCheck()
+        }
         return audioTrimmed
     }
 
@@ -770,6 +783,9 @@ public class Qwen3TTSModel: Module {
     ///   - topP: Top-p sampling (default: 1.0)
     ///   - repetitionPenalty: Repetition penalty (default: 1.05)
     ///   - maxTokens: Maximum tokens to generate (default: 2048)
+    ///   - cancellationCheck: Optional cooperative check, e.g. `Task.checkCancellation`.
+    ///     Called between model steps and before/after waveform decoding. An in-flight
+    ///     GPU operation cannot be interrupted; cancellation is observed after it ends.
     /// - Returns: Generated audio as MLXArray
     ///
     /// Example:
@@ -791,8 +807,10 @@ public class Qwen3TTSModel: Module {
         topP: Float = 1.0,
         repetitionPenalty: Float = 1.05,
         maxTokens: Int = 2048,
-        onToken: ((Int) -> Void)? = nil
+        onToken: ((Int) -> Void)? = nil,
+        cancellationCheck: (() throws -> Void)? = nil
     ) throws -> MLXArray {
+        try cancellationCheck?()
         guard let talkerConfig = config.talkerConfig else {
             throw Qwen3TTSError.modelNotInitialized("Talker config not available")
         }
@@ -846,9 +864,11 @@ public class Qwen3TTSModel: Module {
 
         // Autoregressive generation
         for _ in 0..<effectiveMaxTokens {
+            try cancellationCheck?()
             // Forward through Talker
             let (logits, hiddenStates) = talker(currentInput, cache: cache)
             eval(logits, hiddenStates)
+            try cancellationCheck?()
 
             // Sample first codebook token
             let nextToken = sampleToken(
@@ -880,6 +900,7 @@ public class Qwen3TTSModel: Module {
                 let codePredictorCache = codePredictor.makeCache()
 
                 for codeIdx in 0..<15 {
+                    try cancellationCheck?()
                     // Prepare input
                     let codeInput: MLXArray
                     if codeIdx == 0 {
@@ -900,6 +921,7 @@ public class Qwen3TTSModel: Module {
                         generationStep: codeIdx
                     )
                     eval(codeLogits)
+                    try cancellationCheck?()
 
                     // Sample
                     let nextCode = sampleToken(
@@ -949,6 +971,7 @@ public class Qwen3TTSModel: Module {
         let codes = MLX.stacked(codesArray, axis: 1)  // [1, seq_len, 16]
 
         // Decode to audio
+        try cancellationCheck?()
         let (audio, audioLengths) = speechTokenizer!.decode(codes)
 
         // Trim to valid length
@@ -959,6 +982,11 @@ public class Qwen3TTSModel: Module {
             audioTrimmed = audioTrimmed[0..<validLen]
         }
 
+        // Materialize the lazy decoder graph before the final cancellation check.
+        if let cancellationCheck {
+            eval(audioTrimmed)
+            try cancellationCheck()
+        }
         return audioTrimmed
     }
 
@@ -1288,6 +1316,8 @@ public class Qwen3TTSModel: Module {
     ///   - topP: Top-p sampling
     ///   - repetitionPenalty: Repetition penalty
     ///   - maxTokens: Maximum tokens to generate
+    ///   - cancellationCheck: Cooperative cancellation forwarded to the synchronous
+    ///     generation loop. Pass `{ try Task.checkCancellation() }` from a Swift task.
     /// - Returns: Generated audio as MLXArray
     public func generate(
         text: String,
@@ -1298,8 +1328,10 @@ public class Qwen3TTSModel: Module {
         topK: Int = 50,
         topP: Float = 1.0,
         repetitionPenalty: Float = 1.05,
-        maxTokens: Int = 2048
+        maxTokens: Int = 2048,
+        cancellationCheck: (() throws -> Void)? = nil
     ) async throws -> MLXArray {
+        try cancellationCheck?()
         switch config.ttsModelType {
         case "voice_design":
             guard instruct != nil else {
@@ -1316,7 +1348,8 @@ public class Qwen3TTSModel: Module {
                 topK: topK,
                 topP: topP,
                 repetitionPenalty: repetitionPenalty,
-                maxTokens: maxTokens
+                maxTokens: maxTokens,
+                cancellationCheck: cancellationCheck
             )
 
         case "custom_voice":
@@ -1335,7 +1368,8 @@ public class Qwen3TTSModel: Module {
                 topK: topK,
                 topP: topP,
                 repetitionPenalty: repetitionPenalty,
-                maxTokens: maxTokens
+                maxTokens: maxTokens,
+                cancellationCheck: cancellationCheck
             )
 
         case "base":
@@ -1355,7 +1389,8 @@ public class Qwen3TTSModel: Module {
                 topK: topK,
                 topP: topP,
                 repetitionPenalty: repetitionPenalty,
-                maxTokens: maxTokens
+                maxTokens: maxTokens,
+                cancellationCheck: cancellationCheck
             )
 
         default:
@@ -1368,7 +1403,8 @@ public class Qwen3TTSModel: Module {
                 topK: topK,
                 topP: topP,
                 repetitionPenalty: repetitionPenalty,
-                maxTokens: maxTokens
+                maxTokens: maxTokens,
+                cancellationCheck: cancellationCheck
             )
         }
     }
